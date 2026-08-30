@@ -1,0 +1,10 @@
+{
+  "apps": [
+    {
+      "name": "Mystery Run",
+      "path": "ios-mystery-run",
+      "framework": "swift"
+    }
+  ],
+  "$schema": "https://rork.com/schema/rork.json"
+}
