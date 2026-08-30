@@ -85,13 +85,26 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         return .poor
     }
 
+    /// True only when the built app really declares `location` inside a
+    /// `UIBackgroundModes` **array**. Setting `allowsBackgroundLocationUpdates`
+    /// without that declaration trips a CoreLocation assertion that hard-crashes
+    /// the app, so the flag is never touched unless this check passes.
+    var supportsBackgroundTracking: Bool {
+        guard let modes = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String] else {
+            return false
+        }
+        return modes.contains("location")
+    }
+
     func startTracking() {
         guard isAuthorized else { return }
         isTracking = true
-        // Keeps the fixes coming with the screen locked and the phone pocketed.
-        // Safe to set only once we hold an authorization the system accepts.
-        manager.allowsBackgroundLocationUpdates = true
-        manager.showsBackgroundLocationIndicator = true
+        // Keeps fixes coming with the screen locked and the phone pocketed —
+        // but only where the capability is genuinely declared.
+        if supportsBackgroundTracking {
+            manager.allowsBackgroundLocationUpdates = true
+            manager.showsBackgroundLocationIndicator = true
+        }
         manager.startUpdatingLocation()
         if CLLocationManager.headingAvailable() {
             manager.startUpdatingHeading()
@@ -102,7 +115,9 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         isTracking = false
         manager.stopUpdatingLocation()
         manager.stopUpdatingHeading()
-        manager.allowsBackgroundLocationUpdates = false
+        if supportsBackgroundTracking {
+            manager.allowsBackgroundLocationUpdates = false
+        }
     }
 
     /// Marks that we've stopped expecting a fix (used to fall back to the demo district).
