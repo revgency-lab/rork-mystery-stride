@@ -53,6 +53,11 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         return RouteBuilder.fallbackOrigin
     }
 
+    /// Magnetic declination (true − magnetic) in degrees, once the compass has
+    /// reported. Lets the AR lens reconcile true bearings with the magnetometer's
+    /// magnetic-north reference frame.
+    private(set) var declination: Double?
+
     var hasRealFix: Bool { location != nil }
 
     func requestPermission() {
@@ -124,6 +129,12 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
         let value = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
         Task { @MainActor in
             self.heading = value
+            if newHeading.trueHeading >= 0 {
+                var declination = newHeading.trueHeading - newHeading.magneticHeading
+                if declination > 180 { declination -= 360 }
+                if declination < -180 { declination += 360 }
+                self.declination = declination
+            }
         }
     }
 

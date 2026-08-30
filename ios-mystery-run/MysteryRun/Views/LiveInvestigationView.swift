@@ -18,19 +18,34 @@ struct LiveInvestigationView: View {
     @State private var showOverrideConfirmation: Bool = false
     @State private var showSummary: Bool = false
     @State private var recenterTick: Int = 0
+    @State private var lens: RunLens = .map
+
+    private enum RunLens {
+        case map
+        case camera
+    }
 
     var body: some View {
         @Bindable var engine = engine
 
         ZStack(alignment: .top) {
-            mapLayer
-                .ignoresSafeArea()
+            Group {
+                switch lens {
+                case .map:
+                    mapLayer
+                case .camera:
+                    ARLensView()
+                }
+            }
+            .ignoresSafeArea()
+            .transition(.opacity)
 
             VStack(spacing: 0) {
                 topBar
                 Spacer(minLength: 0)
             }
         }
+        .animation(.easeInOut(duration: 0.25), value: lens)
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 16) {
                 proximityCard
@@ -52,6 +67,7 @@ struct LiveInvestigationView: View {
         .statusBarHidden(false)
         .sensoryFeedback(.success, trigger: engine.discoveryTick)
         .sensoryFeedback(.impact(weight: .light), trigger: engine.proximityTick)
+        .sensoryFeedback(.impact(flexibility: .soft), trigger: lens)
         // A run is a long stretch of looking at a map; don't let the screen nap.
         .persistentSystemOverlays(.hidden)
         .onAppear {
@@ -325,9 +341,26 @@ struct LiveInvestigationView: View {
 
             Spacer()
 
-            RoundControlButton(symbol: "location.viewfinder", label: "Recenter", tint: Theme.brass) {
-                isFollowing = true
-                recenterTick += 1
+            HStack(alignment: .top, spacing: 14) {
+                if lens == .map {
+                    RoundControlButton(symbol: "location.viewfinder", label: "Recenter", tint: Theme.brass) {
+                        isFollowing = true
+                        recenterTick += 1
+                    }
+                }
+
+                if !engine.isIndoor {
+                    RoundControlButton(
+                        symbol: lens == .map ? "camera.fill" : "map.fill",
+                        label: lens == .map ? "Lens" : "Map",
+                        tint: Theme.brass
+                    ) {
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            lens = lens == .map ? .camera : .map
+                        }
+                    }
+                    .accessibilityLabel(lens == .map ? "Switch to camera view" : "Switch to map view")
+                }
             }
         }
         .padding(.horizontal, 12)
