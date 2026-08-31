@@ -30,7 +30,7 @@ struct ARLensView: View {
             ARLensScene(
                 anchors: anchors,
                 frame: worldFrame,
-                collectRadius: collectRadius,
+                collectRadius: effectiveCollectRadius,
                 onCollect: collect
             )
 
@@ -99,16 +99,20 @@ struct ARLensView: View {
     }
 
     /// Where the world is, however well we currently know it.
+    ///
+    /// While ARKit runs it owns the pose outright, even before a position fix has
+    /// arrived — mixing in the compass here would fight the tracked orientation
+    /// and read the field of view off a camera that isn't even running.
     private var worldFrame: ARWorldFrame {
-        if tracker.isRunning, let origin = tracker.origin {
+        if tracker.isRunning {
             return ARWorldFrame(
                 pose: tracker.pose,
-                origin: origin,
+                origin: tracker.origin,
                 // ARKit aligns its world to true north, so no magnetic
                 // correction applies on this path.
                 declination: nil,
                 floorHeight: tracker.floorHeight,
-                overrides: tracker.geoAnchorPositions
+                overrides: placementOverrides
             )
         }
 
@@ -118,8 +122,28 @@ struct ARLensView: View {
                 : nil,
             origin: fallbackOrigin,
             declination: location.declination,
-            floorHeight: nil
+            floorHeight: nil,
+            overrides: placementOverrides
         )
+    }
+
+    /// Indoor cases progress along a virtual route that can be miles from the
+    /// room you are standing in, so geodesy would place every clue over the
+    /// horizon and the lens would show an empty street. Room mode ignores the map
+    /// and stages the evidence around you instead; outdoors, VPS still wins.
+    private var placementOverrides: [UUID: SIMD3<Double>] {
+        guard engine.isIndoor else { return tracker.geoAnchorPositions }
+
+        var staged: [UUID: SIMD3<Double>] = [:]
+        for anchor in anchors {
+            // Golden angle keeps the evidence spread around the room instead of
+            // stacked, and depends only on the clue index, so it stays put
+            // between frames rather than dancing.
+            let angle = Double(anchor.index) * 2.399963
+            let radius = 3.0 + Double(anchor.index % 3) * 1.4
+            staged[anchor.id] = SIMD3(sin(angle) * radius, cos(angle) * radius, 0)
+        }
+        return staged
     }
 
     /// Honest one-liner about why placement isn't perfect yet, or nothing at all
@@ -137,6 +161,10 @@ struct ARLensView: View {
         case let .limited(reason):
             return reason
         case .good:
+            if engine.isIndoor {
+                // Room mode needs no fix at all, so waiting on one would be a lie.
+                return "Indoor case — evidence staged around the room"
+            }
             return tracker.origin == nil ? "Waiting for a position fix" : nil
         }
     }
@@ -178,6 +206,12 @@ struct ARLensView: View {
         let walked = tracker.pose?.tracksTranslation == true
         let earned = walked && distance <= engine.discoveryRadius
         engine.markNextClueFound(asOverride: !earned)
+    }
+
+    /// Room mode places evidence a few metres away by construction, so ARKit is
+    /// the only thing that can tell whether you actually walked to it.
+    private var effectiveCollectRadius: Double {
+        engine.isIndoor ? min(collectRadius, engine.discoveryRadius) : collectRadius
     }
 }
 

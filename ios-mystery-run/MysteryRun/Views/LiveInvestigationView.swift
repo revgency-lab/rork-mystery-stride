@@ -7,6 +7,35 @@ import CoreLocation
 import SwiftUI
 import UIKit
 
+/// Which way the detective is looking for the evidence right now.
+enum RunLens: String, CaseIterable, Identifiable {
+    case map
+    case camera
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .map: "Map"
+        case .camera: "Lens"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .map: "map.fill"
+        case .camera: "camera.viewfinder"
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .map: "Show the map"
+        case .camera: "Show the camera lens"
+        }
+    }
+}
+
 /// Full-screen live investigation: dark map, live metrics, proximity to the next clue.
 struct LiveInvestigationView: View {
     @Environment(InvestigationEngine.self) private var engine
@@ -22,11 +51,6 @@ struct LiveInvestigationView: View {
     @State private var mapBearing: Double = 0
     @State private var selectedClue: Clue?
     @State private var lens: RunLens = .map
-
-    private enum RunLens {
-        case map
-        case camera
-    }
 
     var body: some View {
         @Bindable var engine = engine
@@ -51,7 +75,8 @@ struct LiveInvestigationView: View {
         .animation(.easeInOut(duration: 0.25), value: lens)
         .animation(.easeInOut(duration: 0.2), value: mapBearing > 1)
         .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 16) {
+            VStack(spacing: 14) {
+                LensToggle(selection: $lens)
                 proximityCard
                 controlRow
             }
@@ -375,7 +400,9 @@ struct LiveInvestigationView: View {
 
             Spacer()
 
-            HStack(alignment: .top, spacing: 14) {
+            // Fixed slot so the stop button stays centred whether or not
+            // recentre applies to the current lens.
+            Group {
                 if lens == .map {
                     RoundControlButton(
                         symbol: "location.viewfinder",
@@ -386,20 +413,8 @@ struct LiveInvestigationView: View {
                         recenterTick += 1
                     }
                 }
-
-                if !engine.isIndoor {
-                    RoundControlButton(
-                        symbol: lens == .map ? "camera.fill" : "map.fill",
-                        label: lens == .map ? "Lens" : "Map",
-                        tint: Theme.brass
-                    ) {
-                        withAnimation(.easeInOut(duration: 0.25)) {
-                            lens = lens == .map ? .camera : .map
-                        }
-                    }
-                    .accessibilityLabel(lens == .map ? "Switch to camera view" : "Switch to map view")
-                }
             }
+            .frame(width: 62)
         }
         .padding(.horizontal, 12)
     }
@@ -407,6 +422,60 @@ struct LiveInvestigationView: View {
     private func stop() {
         engine.finish()
         showSummary = true
+    }
+}
+
+// MARK: - Lens toggle
+
+/// Map ⇄ Lens switch.
+///
+/// This sits directly above the proximity card because choosing *how* you hunt
+/// is the second thing a detective does on this screen, after reading how far
+/// away the evidence is. As one more unlabelled circle among the transport
+/// controls it was effectively invisible.
+private struct LensToggle: View {
+    @Binding var selection: RunLens
+
+    @Namespace private var pill
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(RunLens.allCases) { option in
+                Button {
+                    guard selection != option else { return }
+                    withAnimation(.snappy(duration: 0.26)) {
+                        selection = option
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: option.symbolName)
+                            .font(.system(size: 12, weight: .bold))
+                        Text(option.title)
+                            .font(.system(.footnote, weight: .semibold))
+                    }
+                    .foregroundStyle(selection == option ? Theme.ink : Theme.textSecondary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 34)
+                    .background {
+                        if selection == option {
+                            Capsule(style: .continuous)
+                                .fill(Theme.brass)
+                                .matchedGeometryEffect(id: "lensPill", in: pill)
+                        }
+                    }
+                    .contentShape(.capsule)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(option.accessibilityLabel)
+                .accessibilityAddTraits(selection == option ? [.isSelected] : [])
+            }
+        }
+        .padding(3)
+        .background(.ultraThinMaterial, in: .capsule)
+        .overlay {
+            Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+        }
+        .frame(maxWidth: 230)
     }
 }
 

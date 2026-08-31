@@ -41,14 +41,17 @@ struct ARWorldFrame {
     /// height when ARKit hasn't found a plane yet.
     var floorHeight: Double?
 
-    /// Positions resolved by the Visual Positioning System, which outrank the
-    /// frame's own geodesy whenever they are present.
+    /// Local positions that outrank the frame's own geodesy whenever present —
+    /// either resolved by the Visual Positioning System, or staged deliberately
+    /// around the detective for an indoor case whose route is somewhere else.
     var overrides: [UUID: SIMD3<Double>] = [:]
 
     /// True when position is genuinely tracked, so walking changes the distance.
     var tracksTranslation: Bool { pose?.tracksTranslation ?? false }
 
-    var canPlace: Bool { pose != nil && origin != nil }
+    /// Overridden anchors need no geo origin at all: their position in the local
+    /// frame is already known, so geodesy never runs for them.
+    var canPlace: Bool { pose != nil && (origin != nil || !overrides.isEmpty) }
 
     /// Ground level in the local frame.
     var groundHeight: Double { floorHeight ?? -GeoAR.eyeHeight }
@@ -127,16 +130,17 @@ struct ARLensScene: View {
     private func resolve(in size: CGSize) -> [ResolvedAnchor] {
         guard size.width > 1 else { return [] }
 
-        guard let pose = frame.pose, let origin = frame.origin else {
+        guard let pose = frame.pose, frame.canPlace else {
             return centredFallback(in: size)
         }
+        let origin = frame.origin
 
         let focal = pose.focal(viewport: size)
         let ground = frame.groundHeight
         let air = ground + GeoAR.clueHeight
 
         return anchors.compactMap { anchor -> ResolvedAnchor? in
-            let flat = groundOffset(for: anchor, origin: origin)
+            guard let flat = groundOffset(for: anchor, origin: origin) else { return nil }
             let airTarget = SIMD3(flat.x, flat.y, air)
             let distance = GeoAR.groundDistance(from: pose, to: airTarget)
 
@@ -184,12 +188,15 @@ struct ARLensScene: View {
         }
     }
 
-    /// East/north position of an anchor in the local frame, preferring a
-    /// VPS-resolved position when one exists.
-    private func groundOffset(for anchor: EvidenceAnchor, origin: GeoPoint) -> SIMD2<Double> {
+    /// East/north position of an anchor in the local frame, preferring an
+    /// explicit override when one exists. Returns `nil` for an anchor that has
+    /// neither an override nor an origin to measure from — it simply isn't drawn
+    /// rather than being guessed at.
+    private func groundOffset(for anchor: EvidenceAnchor, origin: GeoPoint?) -> SIMD2<Double>? {
         if let override = frame.overrides[anchor.id] {
             return SIMD2(override.x, override.y)
         }
+        guard let origin else { return nil }
         let offset = GeoAR.localOffset(
             from: origin,
             to: anchor.point,
@@ -217,6 +224,9 @@ struct ARLensScene: View {
     }
 
     private func distanceWithoutTracking(to anchor: EvidenceAnchor) -> Double {
+        if let override = frame.overrides[anchor.id] {
+            return (override.x * override.x + override.y * override.y).squareRoot()
+        }
         guard let origin = frame.origin else { return 0 }
         return origin.distance(to: anchor.point)
     }
