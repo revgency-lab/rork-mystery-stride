@@ -72,22 +72,14 @@ struct InkBackground: View {
 /// falls back to a procedural grain so the UI never depends on the asset.
 struct PaperSurface: View {
     var body: some View {
-        // The flat colour is the size anchor. A `.fill` texture reports a larger
-        // layout frame than it is given, so it lives in an overlay and is clipped —
-        // otherwise the paper paints over whatever sits next to it on screen.
-        Theme.paper
-            .overlay {
-                if UIImage(named: AppAsset.paperTexture) != nil {
-                    Image(AppAsset.paperTexture)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .opacity(0.85)
-                        .blendMode(.multiply)
-                        .allowsHitTesting(false)
-                } else {
-                    PaperGrain()
-                }
-            }
+        // The flat colour is the size anchor. The texture is measured against the
+        // real card size and clipped inside its own layer: a `.fill` image reports
+        // a frame wider and taller than it was given, and because it also carries a
+        // blend mode it composites into the parent layer, escaping an outer clip and
+        // painting over whatever sits next to the card.
+        Rectangle()
+            .fill(Theme.paper)
+            .overlay { texture }
             .overlay {
                 LinearGradient(
                     colors: [Color.black.opacity(0.10), .clear, Color.black.opacity(0.14)],
@@ -96,7 +88,26 @@ struct PaperSurface: View {
                 )
                 .blendMode(.multiply)
             }
+            .compositingGroup()
             .clipped()
+            .allowsHitTesting(false)
+    }
+
+    private var texture: some View {
+        GeometryReader { geometry in
+            if UIImage(named: AppAsset.paperTexture) != nil {
+                Image(AppAsset.paperTexture)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .clipped()
+                    .opacity(0.85)
+                    .blendMode(.multiply)
+            } else {
+                PaperGrain()
+            }
+        }
+        .allowsHitTesting(false)
     }
 }
 

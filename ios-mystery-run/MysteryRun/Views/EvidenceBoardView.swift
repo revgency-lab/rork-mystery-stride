@@ -5,7 +5,12 @@
 
 import SwiftUI
 
-/// Evidence tab: the corkboard of everything gathered on the open case.
+/// Evidence tab: everything gathered on the open case, strung together in the
+/// order it turns up on the route.
+///
+/// Every card sizes to its own content — no fixed heights anywhere — so a
+/// three-clue case and a twenty-clue case both read as a finished board, and a
+/// long quotation grows the card instead of being cut off.
 struct EvidenceBoardView: View {
     @Environment(GameStore.self) private var store
     @State private var selectedClue: Clue?
@@ -17,12 +22,7 @@ struct EvidenceBoardView: View {
             if let mysteryCase = store.activeCase {
                 board(for: mysteryCase)
             } else {
-                ContentUnavailableView(
-                    "No open case",
-                    systemImage: "square.grid.2x2",
-                    description: Text("Open a case from the Case tab and the evidence you find will be pinned here.")
-                )
-                .foregroundStyle(Theme.textSecondary)
+                EmptyBoardState()
             }
         }
         .navigationTitle("Evidence Board")
@@ -38,146 +38,475 @@ struct EvidenceBoardView: View {
 
     @ViewBuilder
     private func board(for mysteryCase: MysteryCase) -> some View {
-        let found = mysteryCase.foundClues.count
-
         ScrollView {
-            VStack(spacing: 18) {
-                VStack(spacing: 8) {
-                    EyebrowLabel(text: "Case #\(mysteryCase.number)")
-                    Text(mysteryCase.title)
-                        .font(.system(.title2, design: .serif, weight: .bold))
-                        .foregroundStyle(Theme.textPrimary)
-                        .multilineTextAlignment(.center)
-
-                    ProgressView(value: Double(found), total: Double(mysteryCase.clues.count))
-                        .tint(Theme.brass)
-                        .padding(.horizontal, 40)
-                        .padding(.top, 6)
-
-                    Text("\(found) of \(mysteryCase.clues.count) pieces recovered")
-                        .font(.footnote)
-                        .foregroundStyle(Theme.textSecondary)
-                }
-                .padding(.top, 6)
-
-                LazyVGrid(
-                    columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)],
-                    spacing: 14
-                ) {
-                    ForEach(mysteryCase.clues) { clue in
-                        Button {
-                            if clue.isFound { selectedClue = clue }
-                        } label: {
-                            PinnedEvidenceCard(clue: clue)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(!clue.isFound)
-                    }
-                }
+            VStack(spacing: 16) {
+                BoardHeader(mysteryCase: mysteryCase)
 
                 if mysteryCase.isSolved {
                     NavigationLink(value: ResolutionReport(mysteryCase: mysteryCase)) {
-                        HStack {
-                            Text("Reveal the Truth")
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                        }
-                        .font(.system(.headline, weight: .bold))
-                        .foregroundStyle(Color(red: 0.11, green: 0.08, blue: 0.02))
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 16)
-                        .frame(maxWidth: .infinity)
-                        .background {
-                            LinearGradient(colors: [Theme.brass, Theme.brassDeep], startPoint: .top, endPoint: .bottom)
-                        }
-                        .clipShape(.rect(cornerRadius: 14))
-                        .shadow(color: Theme.brass.opacity(0.35), radius: 14, y: 6)
+                        RevealBanner()
                     }
-                    .padding(.top, 4)
-                } else {
-                    Text("The pieces don't connect yet. Recover the rest of the evidence on your route.")
-                        .font(.footnote)
-                        .foregroundStyle(Theme.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 24)
-                        .padding(.top, 4)
+                    .buttonStyle(PressableCardStyle())
+                }
+
+                EvidenceThread(clues: mysteryCase.clues) { clue in
+                    selectedClue = clue
+                }
+
+                if !mysteryCase.isSolved {
+                    ClosingNote(remaining: mysteryCase.clues.count - mysteryCase.foundClues.count)
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 24)
+            .padding(.top, 4)
+            .padding(.bottom, 36)
         }
     }
 }
 
-/// One clue pinned to the board — a paper card when found, a silhouette when not.
-private struct PinnedEvidenceCard: View {
+// MARK: - Header
+
+/// Case title and recovery progress, filed on one card.
+private struct BoardHeader: View {
+    let mysteryCase: MysteryCase
+
+    private var found: Int { mysteryCase.foundClues.count }
+    private var total: Int { mysteryCase.clues.count }
+    private var progress: Double {
+        total > 0 ? Double(found) / Double(total) : 0
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            EyebrowLabel(text: "Case #\(mysteryCase.number)")
+
+            Text(mysteryCase.title)
+                .font(.system(.title2, design: .serif, weight: .bold))
+                .foregroundStyle(Theme.textPrimary)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+                .minimumScaleFactor(0.72)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 8) {
+                EvidenceMeter(progress: progress, tint: Theme.brass, height: 8)
+
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("EVIDENCE RECOVERED")
+                        .font(.system(size: 10, weight: .heavy))
+                        .kerning(1.4)
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+
+                    Spacer(minLength: 4)
+
+                    Text("\(found) / \(total)")
+                        .font(.system(size: 13, weight: .black, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(found == total ? Theme.brass : Theme.textPrimary)
+                        .contentTransition(.numericText())
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            }
+            .padding(.top, 2)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 18)
+        .frame(maxWidth: .infinity)
+        .inkCard(cornerRadius: 20)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Case \(mysteryCase.number), \(mysteryCase.title). \(found) of \(total) pieces of evidence recovered.")
+    }
+}
+
+// MARK: - Reveal banner
+
+/// Brass call to action shown the moment the last clue lands.
+private struct RevealBanner: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var glowing: Bool = false
+
+    var body: some View {
+        HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("EVERY PIECE IN HAND")
+                    .font(.system(size: 10, weight: .heavy))
+                    .kerning(1.4)
+                    .foregroundStyle(Color(red: 0.11, green: 0.08, blue: 0.02).opacity(0.7))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text("Reveal the Truth")
+                    .font(.system(.headline, weight: .bold))
+                    .foregroundStyle(Color(red: 0.11, green: 0.08, blue: 0.02))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+
+            Spacer(minLength: 8)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(Color(red: 0.11, green: 0.08, blue: 0.02))
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity)
+        .background {
+            LinearGradient(colors: [Theme.brass, Theme.brassDeep], startPoint: .top, endPoint: .bottom)
+        }
+        .clipShape(.rect(cornerRadius: 16))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(Color.white.opacity(0.25), lineWidth: 1)
+        }
+        .shadow(color: Theme.brass.opacity(glowing ? 0.55 : 0.3), radius: glowing ? 20 : 12, y: 6)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
+                glowing = true
+            }
+        }
+    }
+}
+
+// MARK: - Thread
+
+/// The clues themselves, strung on a red investigator's thread in route order.
+private struct EvidenceThread: View {
+    let clues: [Clue]
+    let onSelect: (Clue) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(clues) { clue in
+                ThreadRow(
+                    clue: clue,
+                    isLast: clue.id == clues.last?.id,
+                    onSelect: { onSelect(clue) }
+                )
+            }
+        }
+    }
+}
+
+/// One clue on the thread: a numbered pin in the rail, its card alongside.
+private struct ThreadRow: View {
+    let clue: Clue
+    let isLast: Bool
+    let onSelect: () -> Void
+
+    /// Gap under each card that the thread runs through to the next pin.
+    private let rowSpacing: CGFloat = 14
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            rail
+
+            Group {
+                if clue.isFound {
+                    Button(action: onSelect) {
+                        RecoveredEvidenceCard(clue: clue)
+                    }
+                    .buttonStyle(PressableCardStyle())
+                } else {
+                    SealedEvidenceCard(clue: clue)
+                }
+            }
+            .padding(.bottom, isLast ? 0 : rowSpacing)
+        }
+    }
+
+    /// Badge pinned at the top, thread falling from it to the next row.
+    private var rail: some View {
+        VStack(spacing: 0) {
+            ClueBadge(index: clue.index, found: clue.isFound, diameter: 28)
+                .shadow(color: .black.opacity(0.5), radius: 4, y: 2)
+
+            if !isLast {
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                clue.isFound ? Theme.evidenceRed.opacity(0.75) : Color.white.opacity(0.16),
+                                Color.white.opacity(0.10)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: 1.5)
+                    .frame(maxHeight: .infinity)
+                    .padding(.vertical, 4)
+            }
+        }
+        .frame(width: 28)
+    }
+}
+
+/// A recovered clue: paper, a stamped heading, the fragment in full.
+private struct RecoveredEvidenceCard: View {
     let clue: Clue
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                ClueBadge(index: clue.index, found: clue.isFound, diameter: 24)
-                Spacer()
-                Image(systemName: clue.isFound ? clue.symbolName : "questionmark")
-                    .font(.system(size: 18))
-                    .foregroundStyle(clue.isFound ? Theme.brassDeep : Theme.textSecondary.opacity(0.4))
-            }
+            heading
 
-            if clue.isFound {
-                Text(clue.fragment)
-                    .font(.system(.caption, design: .serif))
-                    .italic()
-                    .foregroundStyle(Theme.paperInk.opacity(0.85))
-                    .lineLimit(4)
-                    .multilineTextAlignment(.leading)
+            Rectangle()
+                .fill(Theme.paperInk.opacity(0.16))
+                .frame(height: 1)
 
-                Spacer(minLength: 0)
+            Text(clue.fragment)
+                .font(.system(.subheadline, design: .serif))
+                .italic()
+                .lineSpacing(4)
+                .foregroundStyle(Theme.paperInk.opacity(0.92))
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text(clue.title.uppercased())
-                    .font(.system(size: 10, weight: .bold))
-                    .kerning(1)
-                    .foregroundStyle(Theme.paperInkSoft)
-            } else {
-                Text("Not yet recovered")
-                    .font(.caption)
-                    .foregroundStyle(Theme.textSecondary.opacity(0.7))
-                Spacer(minLength: 0)
-                Text("CLUE \(clue.index)")
-                    .font(.system(size: 10, weight: .bold))
-                    .kerning(1)
-                    .foregroundStyle(Theme.textSecondary.opacity(0.5))
-            }
+            footer
         }
-        .padding(12)
-        .frame(height: 152, alignment: .topLeading)
-        .frame(maxWidth: .infinity)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background {
-            if clue.isFound {
-                PaperSurface().clipShape(.rect(cornerRadius: 12))
-            } else {
-                RoundedRectangle(cornerRadius: 12).fill(Theme.inkElevated)
-            }
+            PaperSurface()
+                .clipShape(.rect(cornerRadius: 14))
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(
-                    clue.isFound ? Theme.paperInk.opacity(0.15) : Theme.inkStroke,
-                    style: StrokeStyle(lineWidth: 1, dash: clue.isFound ? [] : [4, 4])
-                )
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(Theme.paperInk.opacity(0.16), lineWidth: 1)
         }
-        .overlay(alignment: .top) {
-            if clue.isFound {
-                Circle()
-                    .fill(Theme.evidenceRed)
-                    .frame(width: 10, height: 10)
-                    .shadow(color: .black.opacity(0.6), radius: 3, y: 2)
-                    .offset(y: -4)
+        .overlay(alignment: .topLeading) {
+            // Strip of tape holding the sheet to the board.
+            TapeStrip()
+                .padding(.leading, 10)
+                .offset(y: -5)
+        }
+        .shadow(color: .black.opacity(0.5), radius: 10, y: 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Clue \(clue.index), \(clue.title). \(clue.fragment)")
+        .accessibilityHint("Opens the full evidence file")
+    }
+
+    private var heading: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Image(systemName: clue.symbolName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.brassDeep)
+                .frame(width: 18)
+
+            Text(clue.title.uppercased())
+                .font(.system(size: 11, weight: .heavy))
+                .kerning(1.2)
+                .foregroundStyle(Theme.paperInk)
+                .lineLimit(2)
+                .minimumScaleFactor(0.75)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 4)
+
+            if clue.isPivotal {
+                Text("KEY")
+                    .font(.system(size: 8, weight: .black))
+                    .kerning(1)
+                    .foregroundStyle(Theme.violet)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2.5)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 3)
+                            .strokeBorder(Theme.violet.opacity(0.7), lineWidth: 1)
+                    }
+                    .fixedSize()
             }
         }
-        .rotationEffect(.degrees(clue.isFound ? (clue.index % 2 == 0 ? 1.2 : -1.2) : 0))
-        .shadow(color: .black.opacity(clue.isFound ? 0.5 : 0), radius: 10, y: 6)
+    }
+
+    private var footer: some View {
+        HStack(spacing: 6) {
+            if let foundAt = clue.foundAt {
+                Text(foundAt.formatted(date: .omitted, time: .shortened))
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.paperInkSoft)
+                    .monospacedDigit()
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 4)
+
+            Text("OPEN FILE")
+                .font(.system(size: 9, weight: .heavy))
+                .kerning(1)
+                .foregroundStyle(Theme.paperInkSoft)
+                .lineLimit(1)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(Theme.paperInkSoft)
+        }
     }
 }
+
+/// A clue still out on the route. Says nothing about its contents.
+private struct SealedEvidenceCard: View {
+    let clue: Clue
+
+    var body: some View {
+        HStack(spacing: 12) {
+            EvidenceSealGlyph()
+                .frame(width: 22, height: 22)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("EVIDENCE \(clue.index) · SEALED")
+                    .font(.system(size: 10, weight: .heavy))
+                    .kerning(1.2)
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+
+                Text("Reach the marker on your route to recover it.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textSecondary.opacity(0.75))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.white.opacity(0.03))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(
+                    Theme.inkStroke,
+                    style: StrokeStyle(lineWidth: 1, dash: [5, 5])
+                )
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Evidence \(clue.index), not yet recovered")
+    }
+}
+
+/// Wax seal drawn in vector: a disc with a pressed ring and a slash.
+private struct EvidenceSealGlyph: View {
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Theme.evidenceRed.opacity(0.16))
+            Circle()
+                .strokeBorder(Theme.evidenceRed.opacity(0.45), lineWidth: 1)
+            Circle()
+                .strokeBorder(Theme.evidenceRed.opacity(0.3), lineWidth: 1)
+                .padding(4)
+            Rectangle()
+                .fill(Theme.evidenceRed.opacity(0.4))
+                .frame(width: 1.5, height: 9)
+                .rotationEffect(.degrees(38))
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// Strip of aged tape used to fix a sheet to the board.
+private struct TapeStrip: View {
+    var body: some View {
+        Rectangle()
+            .fill(
+                LinearGradient(
+                    colors: [Color.white.opacity(0.34), Color.white.opacity(0.18)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .frame(width: 46, height: 14)
+            .overlay {
+                Rectangle().strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5)
+            }
+            .rotationEffect(.degrees(-4))
+            .shadow(color: .black.opacity(0.35), radius: 3, y: 2)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
+/// Line under the board while evidence is still missing.
+private struct ClosingNote: View {
+    let remaining: Int
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Rectangle()
+                .fill(Theme.brass.opacity(0.2))
+                .frame(height: 1)
+
+            Text("\(remaining) piece\(remaining == 1 ? "" : "s") still out there")
+                .font(.system(size: 11, weight: .semibold))
+                .kerning(0.6)
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .layoutPriority(1)
+
+            Rectangle()
+                .fill(Theme.brass.opacity(0.2))
+                .frame(height: 1)
+        }
+        .padding(.top, 6)
+    }
+}
+
+// MARK: - Empty state
+
+/// Shown when no case is open: an empty board, not a system placeholder.
+private struct EmptyBoardState: View {
+    var body: some View {
+        VStack(spacing: 18) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 16)
+                    .strokeBorder(
+                        Theme.inkStroke,
+                        style: StrokeStyle(lineWidth: 1.5, dash: [6, 6])
+                    )
+                    .frame(width: 116, height: 92)
+
+                EvidenceSealGlyph()
+                    .frame(width: 34, height: 34)
+            }
+
+            VStack(spacing: 8) {
+                Text("THE BOARD IS BARE")
+                    .font(.system(size: 12, weight: .heavy))
+                    .kerning(1.6)
+                    .foregroundStyle(Theme.brass)
+
+                Text("Open a case from the Case tab. Everything you turn up on the route gets pinned here.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 44)
+        }
+        .padding(.bottom, 40)
+    }
+}
+
+// MARK: - Interaction
+
+/// Cards dip slightly on press instead of flashing a system highlight.
+private struct PressableCardStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+
+// MARK: - Detail
 
 /// Tap-through detail for a recovered clue.
 private struct ClueDetailSheet: View {
@@ -200,11 +529,14 @@ private struct ClueDetailSheet: View {
                                 Text(clue.title)
                                     .font(.system(.title3, weight: .bold))
                                     .foregroundStyle(Theme.textPrimary)
+                                    .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                             Text(clue.discovery + ".")
                                 .font(.callout)
                                 .foregroundStyle(Theme.textSecondary)
                                 .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
 
                         if let foundAt = clue.foundAt {
