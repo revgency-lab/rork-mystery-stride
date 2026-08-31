@@ -5,38 +5,46 @@
 
 import SwiftUI
 
-/// Root tab bar: the four surfaces of the detective's desk.
+/// Root shell. The system tab bar is hidden and replaced with `DetectiveTabBar`
+/// so the palette holds all the way to the bottom edge; `TabView` is kept
+/// underneath for its lazy loading and per-tab navigation state.
 struct ContentView: View {
     @Environment(InvestigationEngine.self) private var engine
+    @State private var selection: AppTab = .caseFile
 
     var body: some View {
-        TabView {
-            Tab("Case", systemImage: "folder.fill") {
-                NavigationStack {
-                    CaseBriefingView()
-                }
-            }
+        TabView(selection: $selection) {
+            NavigationStack { CaseBriefingView() }
+                .tag(AppTab.caseFile)
+                .toolbar(.hidden, for: .tabBar)
 
-            Tab("Evidence", systemImage: "magnifyingglass") {
-                NavigationStack {
-                    EvidenceBoardView()
-                }
-            }
+            NavigationStack { EvidenceBoardView() }
+                .tag(AppTab.evidence)
+                .toolbar(.hidden, for: .tabBar)
 
-            Tab("Progress", systemImage: "chart.bar.fill") {
-                NavigationStack {
-                    ProgressDashboardView()
-                }
-            }
+            NavigationStack { ProgressDashboardView() }
+                .tag(AppTab.progress)
+                .toolbar(.hidden, for: .tabBar)
 
-            Tab("Profile", systemImage: "person.fill") {
-                NavigationStack {
-                    ProfileView()
-                }
-            }
+            NavigationStack { ProfileView() }
+                .tag(AppTab.profile)
+                .toolbar(.hidden, for: .tabBar)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            DetectiveTabBar(
+                selection: $selection,
+                evidenceBadge: evidenceBadge,
+                isLive: engine.isLive
+            )
         }
         .tint(Theme.brass)
         .preferredColorScheme(.dark)
+    }
+
+    /// Only shown while a case is open and at least one clue is in hand.
+    private var evidenceBadge: String? {
+        guard engine.isLive, engine.foundCount > 0 else { return nil }
+        return "\(engine.foundCount)"
     }
 }
 
