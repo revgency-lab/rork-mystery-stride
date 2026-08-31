@@ -24,6 +24,7 @@ struct ProfileView: View {
                     statsCard
                     preferencesCard
                     permissionCard
+                    SceneLabEntry()
 
                     Button("Reset detective record") {
                         showResetConfirmation = true
