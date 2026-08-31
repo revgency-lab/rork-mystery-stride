@@ -166,6 +166,10 @@ struct EvidenceChip: View {
 }
 
 /// Floating capsule of live session metrics.
+///
+/// Every metric is pinned to a single line: a wrapped stat capsule reads as a
+/// broken layout, so values shrink slightly rather than ever spilling onto a
+/// second row — whatever the clock reads or how many clues a case holds.
 struct StatCapsule: View {
     let items: [(symbol: String, text: String)]
 
@@ -175,24 +179,43 @@ struct StatCapsule: View {
                 if index > 0 {
                     Rectangle()
                         .fill(Color.white.opacity(0.12))
-                        .frame(width: 1, height: 18)
+                        .frame(width: 1, height: 16)
                 }
                 HStack(spacing: 5) {
                     Image(systemName: item.symbol)
-                        .font(.caption2)
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(Theme.brass)
                     Text(item.text)
-                        .font(.system(.subheadline, weight: .semibold))
+                        .font(.system(.footnote, weight: .semibold))
                         .monospacedDigit()
                         .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 10)
             }
         }
-        .padding(.vertical, 10)
+        .frame(height: 38)
         .background(.ultraThinMaterial, in: .capsule)
         .overlay { Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 1) }
         .shadow(color: .black.opacity(0.5), radius: 10, y: 4)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Press treatment for the briefing's route photograph: it dips slightly and
+/// warms up, so the survey reads as something you can pick up and study.
+struct MapPreviewButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Theme.brass.opacity(configuration.isPressed ? 0.12 : 0))
+                    .allowsHitTesting(false)
+            }
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: configuration.isPressed)
     }
 }
 

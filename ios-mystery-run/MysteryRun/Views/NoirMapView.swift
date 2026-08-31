@@ -76,6 +76,13 @@ enum NoirMapCamera: Equatable {
     case fit([GeoPoint], padding: CGFloat)
     /// Centre on one point at a fixed zoom.
     case center(GeoPoint, zoom: Double)
+    /// Keep a moving point in view **without ever touching zoom or bearing**.
+    ///
+    /// Re-centring on every GPS tick is what made the map feel like it was
+    /// yanking itself around, and re-stating a zoom level threw away whatever
+    /// the detective had pinched to. This nudges the camera only when the point
+    /// drifts towards the edge of the screen; bumping `recenterToken` forces one.
+    case follow(GeoPoint, recenterToken: Int)
 }
 
 /// Bridge that lets SwiftUI turn a touch location into a map coordinate, used by
@@ -110,9 +117,23 @@ struct NoirMapView: UIViewRepresentable {
     var dimsPlannedRoute: Bool = false
     var showsStartPin: Bool = true
     var showsAttribution: Bool = true
+    /// Lets the detective turn the map to match the street they're facing.
+    var allowsRotation: Bool = false
+    /// Bumping this snaps the map back to north-up.
+    var resetNorthToken: Int = 0
+    /// Bumping this re-applies the current framing, e.g. to fit a route again
+    /// after the detective has wandered off across the city.
+    var refitToken: Int = 0
     var proxy: NoirMapProxy? = nil
     /// Fires with the map centre once the detective stops moving the camera.
     var onCameraIdle: ((CLLocationCoordinate2D) -> Void)? = nil
+    /// Fires only for camera moves the detective made with their hands, so an
+    /// automatic follow nudge can't be mistaken for "they panned away".
+    var onUserGesture: (() -> Void)? = nil
+    /// Current map rotation, in degrees clockwise from north.
+    var onBearingChange: ((Double) -> Void)? = nil
+    /// A clue node was tapped.
+    var onClueTap: ((UUID) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -127,7 +148,7 @@ struct NoirMapView: UIViewRepresentable {
         mapView.compassView.isHidden = true
         mapView.showsScale = false
         mapView.showsUserLocation = false
-        mapView.allowsRotating = false
+        mapView.allowsRotating = isInteractive && allowsRotation
         mapView.allowsTilting = false
         mapView.attributionButton.isHidden = !showsAttribution
         mapView.attributionButton.tintColor = UIColor(Theme.brass).withAlphaComponent(0.55)
@@ -138,6 +159,7 @@ struct NoirMapView: UIViewRepresentable {
 
         context.coordinator.mapView = mapView
         context.coordinator.config = self
+        context.coordinator.attachTapHandling(to: mapView)
         proxy?.mapView = mapView
         return mapView
     }
@@ -146,6 +168,7 @@ struct NoirMapView: UIViewRepresentable {
         proxy?.mapView = mapView
         mapView.allowsScrolling = isInteractive
         mapView.allowsZooming = isInteractive
+        mapView.allowsRotating = isInteractive && allowsRotation
         mapView.attributionButton.isHidden = !showsAttribution
         context.coordinator.apply(config: self)
     }
@@ -158,7 +181,7 @@ struct NoirMapView: UIViewRepresentable {
     // MARK: - Coordinator
 
     @MainActor
-    final class Coordinator: NSObject, MLNMapViewDelegate {
+    final class Coordinator: NSObject, MLNMapViewDelegate, UIGestureRecognizerDelegate {
         weak var mapView: MLNMapView?
         var config: NoirMapView?
 
@@ -166,6 +189,13 @@ struct NoirMapView: UIViewRepresentable {
         private var registeredImages: Set<String> = []
         private var appliedCamera: NoirMapCamera?
         private var hasFramedOnce: Bool = false
+        private var appliedRecenterToken: Int = 0
+        private var appliedNorthToken: Int = 0
+        private var appliedRefitToken: Int = 0
+        private var reportedBearing: Double = 0
+        /// Programmatic camera moves fire the region delegate too. Anything that
+        /// lands before this instant is our move, not the detective's.
+        private var programmaticMoveEnds: Date = .distantPast
 
         private enum SourceID {
             static let route = "mr-route"
@@ -190,7 +220,70 @@ struct NoirMapView: UIViewRepresentable {
         nonisolated func mapView(_ mapView: MLNMapView, regionDidChangeAnimated animated: Bool) {
             MainActor.assumeIsolated {
                 config?.onCameraIdle?(mapView.centerCoordinate)
+
+                let bearing = mapView.direction
+                if abs(bearing - reportedBearing) > 0.5 {
+                    reportedBearing = bearing
+                    config?.onBearingChange?(bearing)
+                }
+
+                guard Date() > programmaticMoveEnds else { return }
+                config?.onUserGesture?()
             }
+        }
+
+        // MARK: Tap handling
+
+        /// Adds evidence-node tapping without stealing the map's own gestures.
+        func attachTapHandling(to mapView: MLNMapView) {
+            let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+            tap.delegate = self
+            // Let the map's double-tap zoom win when the tap is a double.
+            for existing in mapView.gestureRecognizers ?? [] {
+                guard let existing = existing as? UITapGestureRecognizer,
+                      existing.numberOfTapsRequired > 1 else { continue }
+                tap.require(toFail: existing)
+            }
+            mapView.addGestureRecognizer(tap)
+        }
+
+        @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
+            guard let mapView, let onClueTap = config?.onClueTap else { return }
+            let tapPoint = recognizer.location(in: mapView)
+            // Fingertip-sized hit area — the nodes are small at low zoom.
+            let slop: CGFloat = 26
+            let rect = CGRect(
+                x: tapPoint.x - slop,
+                y: tapPoint.y - slop,
+                width: slop * 2,
+                height: slop * 2
+            )
+            let features = mapView.visibleFeatures(in: rect, styleLayerIdentifiers: ["mr-clues"])
+
+            // With overlapping nodes, the one closest to the finger wins.
+            var bestID: UUID?
+            var bestDistance = CGFloat.greatestFiniteMagnitude
+            for feature in features {
+                guard let raw = feature.attribute(forKey: "clue") as? String,
+                      let id = UUID(uuidString: raw),
+                      let pointFeature = feature as? MLNPointFeature else { continue }
+                let screen = mapView.convert(pointFeature.coordinate, toPointTo: mapView)
+                let distance = hypot(screen.x - tapPoint.x, screen.y - tapPoint.y)
+                if distance < bestDistance {
+                    bestDistance = distance
+                    bestID = id
+                }
+            }
+
+            guard let bestID else { return }
+            onClueTap(bestID)
+        }
+
+        nonisolated func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+        ) -> Bool {
+            true
         }
 
         // MARK: Layer installation
@@ -345,6 +438,12 @@ struct NoirMapView: UIViewRepresentable {
             updateClues(style: style, config: config)
             updateDetective(style: style, point: config.detective)
 
+            applyNorthReset(token: config.resetNorthToken, on: mapView)
+            if config.refitToken != appliedRefitToken {
+                appliedRefitToken = config.refitToken
+                // Forget what we last applied so an unchanged framing re-runs.
+                appliedCamera = nil
+            }
             applyCamera(config.camera, on: mapView)
         }
 
@@ -408,7 +507,7 @@ struct NoirMapView: UIViewRepresentable {
                 }
                 let feature = MLNPointFeature()
                 feature.coordinate = clue.point.coordinate
-                feature.attributes = ["icon": name]
+                feature.attributes = ["icon": name, "clue": clue.id.uuidString]
                 features.append(feature)
             }
 
@@ -429,15 +528,23 @@ struct NoirMapView: UIViewRepresentable {
         // MARK: Camera
 
         private func applyCamera(_ camera: NoirMapCamera, on mapView: MLNMapView) {
+            // Follow has to be evaluated every update, since the point keeps moving.
+            if case let .follow(point, token) = camera {
+                follow(point, recenterToken: token, on: mapView)
+                appliedCamera = camera
+                return
+            }
+
             guard camera != appliedCamera else { return }
 
             switch camera {
-            case .free:
+            case .free, .follow:
                 break
 
             case let .fit(points, padding):
                 guard let bounds = Self.bounds(for: points) else { return }
                 let inset = UIEdgeInsets(top: padding, left: padding, bottom: padding, right: padding)
+                beginProgrammaticMove(animated: hasFramedOnce)
                 mapView.setVisibleCoordinateBounds(
                     bounds,
                     edgePadding: inset,
@@ -447,11 +554,63 @@ struct NoirMapView: UIViewRepresentable {
                 hasFramedOnce = true
 
             case let .center(point, zoom):
+                beginProgrammaticMove(animated: hasFramedOnce)
                 mapView.setCenter(point.coordinate, zoomLevel: zoom, animated: hasFramedOnce)
                 hasFramedOnce = true
             }
 
             appliedCamera = camera
+        }
+
+        /// Keeps the detective on screen with the lightest touch possible: no zoom
+        /// change, no bearing change, and no movement at all while they're inside
+        /// the frame. Reading a street corner should never be interrupted by the
+        /// camera deciding to reframe itself.
+        private func follow(_ point: GeoPoint, recenterToken: Int, on mapView: MLNMapView) {
+            // First frame of a run: establish a sensible street-level zoom once.
+            guard hasFramedOnce else {
+                beginProgrammaticMove(animated: false)
+                mapView.setCenter(point.coordinate, zoomLevel: 15.4, animated: false)
+                hasFramedOnce = true
+                appliedRecenterToken = recenterToken
+                return
+            }
+
+            // They asked for it: always oblige, preserving their zoom.
+            if recenterToken != appliedRecenterToken {
+                appliedRecenterToken = recenterToken
+                beginProgrammaticMove(animated: true)
+                mapView.setCenter(point.coordinate, animated: true)
+                return
+            }
+
+            let bounds = mapView.bounds
+            guard bounds.width > 0, bounds.height > 0 else { return }
+
+            let screen = mapView.convert(point.coordinate, toPointTo: mapView)
+            // Generous dead zone, biased upward because the proximity card and
+            // controls cover the bottom third of the map.
+            let comfort = CGRect(
+                x: bounds.minX + bounds.width * 0.22,
+                y: bounds.minY + bounds.height * 0.18,
+                width: bounds.width * 0.56,
+                height: bounds.height * 0.42
+            )
+            guard !comfort.contains(screen) else { return }
+
+            beginProgrammaticMove(animated: true)
+            mapView.setCenter(point.coordinate, animated: true)
+        }
+
+        private func beginProgrammaticMove(animated: Bool) {
+            programmaticMoveEnds = Date().addingTimeInterval(animated ? 1.0 : 0.25)
+        }
+
+        private func applyNorthReset(token: Int, on mapView: MLNMapView) {
+            guard token != appliedNorthToken else { return }
+            appliedNorthToken = token
+            beginProgrammaticMove(animated: true)
+            mapView.setDirection(0, animated: true)
         }
 
         private static func bounds(for points: [GeoPoint]) -> MLNCoordinateBounds? {

@@ -18,6 +18,9 @@ struct LiveInvestigationView: View {
     @State private var showOverrideConfirmation: Bool = false
     @State private var showSummary: Bool = false
     @State private var recenterTick: Int = 0
+    @State private var northTick: Int = 0
+    @State private var mapBearing: Double = 0
+    @State private var selectedClue: Clue?
     @State private var lens: RunLens = .map
 
     private enum RunLens {
@@ -46,6 +49,7 @@ struct LiveInvestigationView: View {
             }
         }
         .animation(.easeInOut(duration: 0.25), value: lens)
+        .animation(.easeInOut(duration: 0.2), value: mapBearing > 1)
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 16) {
                 proximityCard
@@ -89,25 +93,41 @@ struct LiveInvestigationView: View {
                 }
             }
         }
-        .confirmationDialog(
-            "End this investigation?",
-            isPresented: $showStopConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Close the Case", role: .destructive) { stop() }
-            Button("Keep Going", role: .cancel) {}
-        } message: {
-            Text("Evidence you've already found stays in your file.")
+        .noirPopup(item: $selectedClue) { clue in
+            MapClueCard(
+                clue: clue,
+                distance: engine.currentPoint?.distance(to: clue.point),
+                onClose: { selectedClue = nil }
+            )
         }
-        .confirmationDialog(
-            "Can't reach this evidence?",
-            isPresented: $showOverrideConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Collect It Anyway") { engine.markNextClueFound() }
-            Button("Keep Searching", role: .cancel) {}
-        } message: {
-            Text("Use this if the clue landed somewhere you can't get to, or the GPS is drifting.")
+        .noirPopup(isPresented: $showStopConfirmation) {
+            NoirConfirmCard(
+                stamp: "Case Status",
+                title: "End this investigation?",
+                message: "Evidence you've already found stays in your file. The rest of the trail goes cold.",
+                symbolName: "xmark.seal.fill",
+                confirmTitle: "Close the Case",
+                onConfirm: {
+                    showStopConfirmation = false
+                    stop()
+                },
+                onCancel: { showStopConfirmation = false }
+            )
+        }
+        .noirPopup(isPresented: $showOverrideConfirmation) {
+            NoirConfirmCard(
+                stamp: "Field Note",
+                title: "Can't reach this evidence?",
+                message: "Use this if the clue landed somewhere you can't get to, or the GPS is drifting.",
+                symbolName: "hand.tap.fill",
+                confirmTitle: "Collect It Anyway",
+                isDestructive: false,
+                onConfirm: {
+                    showOverrideConfirmation = false
+                    engine.markNextClueFound()
+                },
+                onCancel: { showOverrideConfirmation = false }
+            )
         }
     }
 
@@ -122,10 +142,18 @@ struct LiveInvestigationView: View {
             focusRing: focusRing,
             camera: camera,
             dimsPlannedRoute: true,
-            onCameraIdle: { center in
-                guard let point = engine.currentPoint else { return }
-                // Stop chasing the detective if they've deliberately panned away.
-                isFollowing = GeoPoint(center).distance(to: point) < 350
+            allowsRotation: true,
+            resetNorthToken: northTick,
+            onUserGesture: {
+                // Hands on the map means they're reading it themselves; stop
+                // moving the camera under them until they ask us to.
+                if isFollowing { isFollowing = false }
+            },
+            onBearingChange: { bearing in
+                mapBearing = bearing
+            },
+            onClueTap: { id in
+                selectedClue = engine.mysteryCase?.clues.first { $0.id == id }
             }
         )
         .overlay {
@@ -154,15 +182,16 @@ struct LiveInvestigationView: View {
         )
     }
 
-    /// Follows the detective while they haven't taken the camera themselves.
-    /// `recenterTick` re-arms the follow after a manual pan.
+    /// Follows the detective while they haven't taken the map into their own
+    /// hands. Follow never alters zoom or rotation — it only nudges the centre
+    /// when they near the edge of the frame — so studying a junction is never
+    /// interrupted by the camera reframing itself.
     private var camera: NoirMapCamera {
         guard isFollowing,
               let point = engine.currentPoint ?? engine.mysteryCase?.route.first else {
             return .free
         }
-        _ = recenterTick
-        return .center(point, zoom: 15.4)
+        return .follow(point, recenterToken: recenterTick)
     }
 
     // MARK: - Chrome
@@ -182,51 +211,47 @@ struct LiveInvestigationView: View {
 
             StatCapsule(items: [
                 (symbol: "stopwatch", text: engine.elapsed.clockString),
-                (symbol: "location.fill", text: "\(engine.distance.kilometreString) km"),
-                (symbol: "flag.fill", text: "\(engine.foundCount) / \(engine.clueTotal)")
+                (symbol: "location.fill", text: "\(engine.distance.shortKilometreString) km"),
+                (symbol: "flag.fill", text: "\(engine.foundCount)/\(engine.clueTotal)")
             ])
 
             Spacer(minLength: 0)
 
-            signalPip
+            northButton
         }
         .padding(.horizontal, 16)
         .padding(.top, 6)
     }
 
-    /// Quiet GPS-health pip — amber when the fix is soft, red when it's unusable.
+    /// Appears only once the map has been turned off north, and puts it back.
     @ViewBuilder
-    private var signalPip: some View {
-        if !engine.isIndoor {
-            let quality = location.signalQuality
-            HStack(spacing: 5) {
-                Image(systemName: quality == .none ? "antenna.radiowaves.left.and.right.slash" : "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 11, weight: .semibold))
-                Text(signalLabel(quality))
-                    .font(.system(size: 11, weight: .semibold))
+    private var northButton: some View {
+        if lens == .map, abs(mapBearing) > 1 {
+            Button {
+                northTick += 1
+            } label: {
+                Image(systemName: "location.north.line.fill")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Theme.brass)
+                    .rotationEffect(.degrees(-mapBearing))
+                    .frame(width: 38, height: 38)
+                    .background(.ultraThinMaterial, in: .circle)
+                    .overlay { Circle().strokeBorder(Color.white.opacity(0.12), lineWidth: 1) }
             }
-            .foregroundStyle(signalColor(quality))
-            .padding(.horizontal, 10)
-            .frame(height: 30)
-            .background(.ultraThinMaterial, in: .capsule)
-            .accessibilityLabel("GPS signal \(signalLabel(quality))")
+            .buttonStyle(.plain)
+            .transition(.scale.combined(with: .opacity))
+            .accessibilityLabel("Face the map north")
         }
     }
 
-    private func signalLabel(_ quality: LocationService.SignalQuality) -> String {
-        switch quality {
-        case .good: "GPS"
-        case .fair: "Weak"
-        case .poor: "Drifting"
-        case .none: "No fix"
-        }
-    }
-
-    private func signalColor(_ quality: LocationService.SignalQuality) -> Color {
-        switch quality {
-        case .good: Theme.textSecondary
-        case .fair: Theme.brass
-        case .poor, .none: Theme.evidenceRed
+    /// A healthy GPS fix is the normal case and doesn't deserve permanent
+    /// chrome — the detective is only told about their signal when it's actually
+    /// hurting them, in the card they're already reading.
+    private var hasWeakSignal: Bool {
+        guard !engine.isIndoor else { return false }
+        switch location.signalQuality {
+        case .poor, .none: return true
+        case .good, .fair: return false
         }
     }
 
@@ -254,11 +279,10 @@ struct LiveInvestigationView: View {
                         .foregroundStyle(Theme.brass)
                         .contentTransition(.numericText())
 
-                    Text(engine.phase == .paused
-                         ? "Paused — resume when you're moving again"
-                         : "Keep moving to examine the evidence")
+                    Text(statusLine)
                         .font(.caption)
-                        .foregroundStyle(Theme.textSecondary)
+                        .foregroundStyle(hasWeakSignal ? Theme.evidenceRed : Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     ProgressView(value: engine.approachProgress)
                         .tint(Theme.brass)
@@ -318,6 +342,16 @@ struct LiveInvestigationView: View {
         return "\(distance.proximityString) away"
     }
 
+    private var statusLine: String {
+        if engine.phase == .paused {
+            return "Paused — resume when you're moving again"
+        }
+        if hasWeakSignal {
+            return "Weak GPS — distances may drift until the fix settles"
+        }
+        return "Keep moving to examine the evidence"
+    }
+
     private var controlRow: some View {
         HStack(alignment: .top) {
             RoundControlButton(
@@ -343,7 +377,11 @@ struct LiveInvestigationView: View {
 
             HStack(alignment: .top, spacing: 14) {
                 if lens == .map {
-                    RoundControlButton(symbol: "location.viewfinder", label: "Recenter", tint: Theme.brass) {
+                    RoundControlButton(
+                        symbol: "location.viewfinder",
+                        label: "Recenter",
+                        tint: isFollowing ? Theme.brass : Theme.textPrimary
+                    ) {
                         isFollowing = true
                         recenterTick += 1
                     }

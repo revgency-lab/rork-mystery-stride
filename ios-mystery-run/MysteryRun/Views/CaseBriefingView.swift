@@ -14,6 +14,7 @@ struct CaseBriefingView: View {
     @State private var isGenerating: Bool = false
     @State private var showInvestigation: Bool = false
     @State private var showRouteDrawing: Bool = false
+    @State private var showRouteSurvey: Bool = false
     @State private var selectedMode: SessionMode = .run
 
     var body: some View {
@@ -62,6 +63,19 @@ struct CaseBriefingView: View {
         .fullScreenCover(isPresented: $showInvestigation) {
             LiveInvestigationView()
         }
+        .fullScreenCover(isPresented: $showRouteSurvey) {
+            if let mysteryCase = store.activeCase {
+                RouteSurveyView(
+                    mysteryCase: mysteryCase,
+                    ctaTitle: mysteryCase.foundClues.isEmpty ? "Begin Investigation" : "Continue Investigation",
+                    onStart: {
+                        showRouteSurvey = false
+                        start(mysteryCase)
+                    },
+                    onClose: { showRouteSurvey = false }
+                )
+            }
+        }
         .fullScreenCover(isPresented: $showRouteDrawing) {
             NavigationStack {
                 RouteDrawingView(origin: location.origin) { drawn in
@@ -97,14 +111,37 @@ struct CaseBriefingView: View {
                     .padding(.top, 14)
                     .padding(.bottom, 10)
 
-                    RoutePreviewMap(
-                        route: mysteryCase.route,
-                        clues: mysteryCase.clues,
-                        surveyLabel: mysteryCase.isDrawnRoute
-                            ? "Your Route · Case #\(mysteryCase.number)"
-                            : "Aerial Survey · Case #\(mysteryCase.number)"
-                    )
+                    Button {
+                        showRouteSurvey = true
+                    } label: {
+                        RoutePreviewMap(
+                            route: mysteryCase.route,
+                            clues: mysteryCase.clues,
+                            surveyLabel: mysteryCase.isDrawnRoute
+                                ? "Your Route · Case #\(mysteryCase.number)"
+                                : "Aerial Survey · Case #\(mysteryCase.number)"
+                        )
                         .frame(height: 230)
+                        .overlay(alignment: .topTrailing) {
+                            // The survey is a photograph until you pick it up.
+                            HStack(spacing: 5) {
+                                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                    .font(.system(size: 9, weight: .bold))
+                                Text("EXPLORE")
+                                    .font(.system(size: 9, weight: .heavy))
+                                    .kerning(1.2)
+                            }
+                            .foregroundStyle(Theme.brass)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 6)
+                            .background(.black.opacity(0.6), in: .capsule)
+                            .overlay { Capsule().strokeBorder(Theme.brass.opacity(0.35), lineWidth: 1) }
+                            .padding(12)
+                        }
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(MapPreviewButtonStyle())
+                    .accessibilityLabel("Explore the route on a full map")
 
                     Divider().overlay(Theme.inkStroke)
 
