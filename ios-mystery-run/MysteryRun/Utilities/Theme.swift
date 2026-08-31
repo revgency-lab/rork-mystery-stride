@@ -63,25 +63,31 @@ struct InkBackground: View {
 /// falls back to a procedural grain so the UI never depends on the asset.
 struct PaperSurface: View {
     var body: some View {
-        ZStack {
-            Theme.paper
-            if UIImage(named: AppAsset.paperTexture) != nil {
-                Image(AppAsset.paperTexture)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .opacity(0.85)
-                    .blendMode(.multiply)
-                    .allowsHitTesting(false)
-            } else {
-                PaperGrain()
+        // The flat colour is the size anchor. A `.fill` texture reports a larger
+        // layout frame than it is given, so it lives in an overlay and is clipped —
+        // otherwise the paper paints over whatever sits next to it on screen.
+        Theme.paper
+            .overlay {
+                if UIImage(named: AppAsset.paperTexture) != nil {
+                    Image(AppAsset.paperTexture)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .opacity(0.85)
+                        .blendMode(.multiply)
+                        .allowsHitTesting(false)
+                } else {
+                    PaperGrain()
+                }
             }
-            LinearGradient(
-                colors: [Color.black.opacity(0.10), .clear, Color.black.opacity(0.14)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .blendMode(.multiply)
-        }
+            .overlay {
+                LinearGradient(
+                    colors: [Color.black.opacity(0.10), .clear, Color.black.opacity(0.14)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .blendMode(.multiply)
+            }
+            .clipped()
     }
 }
 

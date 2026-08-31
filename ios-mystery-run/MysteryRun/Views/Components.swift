@@ -81,14 +81,28 @@ struct MetricBlock: View {
     }
 }
 
-/// Row of evidence icons showing which clues are already in the file.
+/// Row of evidence icons showing which clues are already in the file. Long cases
+/// carry up to 20 clues, so the track wraps onto extra rows instead of squeezing
+/// every chip off the edge of the screen.
 struct EvidenceTrackRow: View {
     let clues: [Clue]
 
+    private var chipSide: CGFloat {
+        switch clues.count {
+        case ...8: 48
+        case 9...14: 40
+        default: 34
+        }
+    }
+
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: chipSide, maximum: chipSide * 1.5), spacing: 8)]
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
+        LazyVGrid(columns: columns, spacing: 8) {
             ForEach(clues) { clue in
-                EvidenceChip(clue: clue)
+                EvidenceChip(clue: clue, side: chipSide)
             }
         }
         .accessibilityElement(children: .ignore)
@@ -98,13 +112,16 @@ struct EvidenceTrackRow: View {
 
 struct EvidenceChip: View {
     let clue: Clue
+    var side: CGFloat = 48
+
+    private var cornerRadius: CGFloat { side * 0.21 }
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 10)
+        RoundedRectangle(cornerRadius: cornerRadius)
             .fill(clue.isFound ? Theme.brass.opacity(0.16) : Color.white.opacity(0.04))
-            .frame(height: 48)
+            .frame(height: side)
             .overlay {
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: cornerRadius)
                     .strokeBorder(
                         clue.isFound ? Theme.brass.opacity(0.8) : Color.white.opacity(0.12),
                         lineWidth: 1
@@ -112,16 +129,16 @@ struct EvidenceChip: View {
             }
             .overlay {
                 Image(systemName: clue.symbolName)
-                    .font(.system(size: 18))
+                    .font(.system(size: side * 0.38))
                     .foregroundStyle(clue.isFound ? Theme.brass : Theme.textSecondary.opacity(0.45))
             }
             .overlay(alignment: .topTrailing) {
                 if clue.isFound {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 15))
+                        .font(.system(size: side * 0.31))
                         .foregroundStyle(Theme.brass)
                         .background(Circle().fill(Theme.ink))
-                        .offset(x: 5, y: -5)
+                        .offset(x: side * 0.1, y: -side * 0.1)
                 }
             }
     }

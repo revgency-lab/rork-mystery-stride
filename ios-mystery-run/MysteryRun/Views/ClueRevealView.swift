@@ -28,6 +28,7 @@ struct ClueRevealView: View {
                     ZStack(alignment: .bottomTrailing) {
                         EvidenceNote(fragment: clue.fragment)
                             .rotationEffect(.degrees(-1.5))
+                            .padding(.trailing, 10)
 
                         Image(systemName: "magnifyingglass")
                             .font(.system(size: 62, weight: .ultraLight))
@@ -43,12 +44,15 @@ struct ClueRevealView: View {
                     .padding(.top, 6)
 
                     VStack(spacing: 10) {
-                        HStack(spacing: 8) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Image(systemName: clue.symbolName)
+                                .font(.title3)
                                 .foregroundStyle(Theme.brass)
                             Text(clue.title)
-                                .font(.system(.title, weight: .bold))
+                                .font(.system(.title2, weight: .bold))
                                 .foregroundStyle(Theme.textPrimary)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
 
                         Text(clue.discovery + ".")
