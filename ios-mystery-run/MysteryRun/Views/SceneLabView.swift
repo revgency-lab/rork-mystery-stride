@@ -393,25 +393,27 @@ struct ARRehearsalView: View {
 
     @Environment(LocationService.self) private var location
 
+    @State private var tracker = ARWorldTracker()
     @State private var camera = CameraService()
     @State private var attitude = AttitudeService()
     @State private var anchorOrigin: GeoPoint?
-    @State private var dropDistance: Double = 8
+    @State private var dropDistance: Double = 3
     @State private var showsDiagnostics: Bool = true
 
     private let distanceChoices: [Double] = [3, 8, 25, 100]
 
     var body: some View {
         ZStack {
-            ARCameraBackdrop(camera: camera)
+            if tracker.isRunning {
+                ARWorldBackdrop(session: tracker.session)
+                    .noirGrade()
+            } else {
+                ARCameraBackdrop(camera: camera)
+            }
 
             ARLensScene(
                 anchors: anchors,
-                userPoint: userPoint,
-                matrix: attitude.matrix,
-                declination: location.declination,
-                fieldOfView: camera.fieldOfView,
-                compassAvailable: attitude.isAvailable,
+                frame: worldFrame,
                 collectRadius: 0,
                 onCollect: nil
             )
@@ -429,12 +431,29 @@ struct ARRehearsalView: View {
         .background(Theme.ink)
         .preferredColorScheme(.dark)
         .onAppear {
-            camera.start()
-            attitude.start()
             location.requestPermission()
+            location.beginPreciseUpdates()
+            if ARWorldTracker.isSupported {
+                tracker.start()
+                tracker.reset()
+                if let fix = location.location { tracker.ingest(fix: fix) }
+            } else {
+                camera.start()
+                attitude.start()
+            }
+        }
+        .onChange(of: location.location?.timestamp) { _, _ in
+            if let fix = location.location { tracker.ingest(fix: fix) }
             if anchorOrigin == nil { dropAnchor() }
         }
+        .onChange(of: tracker.isPlacing) { _, placing in
+            // The first drop has to wait for a frame to exist, or the clue lands
+            // in a world that hasn't been built yet.
+            if placing, anchorOrigin == nil { dropAnchor() }
+        }
         .onDisappear {
+            location.endPreciseUpdates()
+            tracker.stop()
             camera.stop()
             attitude.stop()
         }
@@ -483,10 +502,11 @@ struct ARRehearsalView: View {
 
     private var diagnostics: some View {
         VStack(alignment: .leading, spacing: 5) {
-            diagnosticRow("Compass", attitude.isAvailable ? "live" : "unavailable", ok: attitude.isAvailable)
-            diagnosticRow("Heading", headingText, ok: location.heading != nil)
-            diagnosticRow("Declination", declinationText, ok: location.declination != nil)
-            diagnosticRow("Camera FOV", String(format: "%.1f°", camera.fieldOfView), ok: camera.status == .running)
+            diagnosticRow("Tracking", trackingText, ok: tracker.isPlacing)
+            diagnosticRow("Quality", qualityText, ok: tracker.quality == .good)
+            diagnosticRow("Floor", floorText, ok: tracker.floorHeight != nil)
+            diagnosticRow("Origin ±", originText, ok: tracker.origin != nil)
+            diagnosticRow("Moved", movedText, ok: tracker.pose != nil)
             diagnosticRow("GPS accuracy", accuracyText, ok: location.location != nil)
         }
         .padding(12)
@@ -550,27 +570,65 @@ struct ARRehearsalView: View {
 
     private var instruction: String {
         guard anchorOrigin != nil else {
-            return "Waiting for a position fix. Step near a window if this doesn't clear."
+            return "Waiting for tracking to start. Move the phone slowly so it can read the room."
         }
-        return "A clue is pinned \(Int(dropDistance)) m ahead of where you stood. Pan around: the ring should stay welded to one spot on the floor. If it slides with the phone, the projection is off."
+        if tracker.isRunning {
+            return "A clue is pinned \(Int(dropDistance)) m ahead of where you stood. Walk around it: the ring should stay welded to one spot on the floor and the distance should count down as you approach."
+        }
+        return "A clue is pinned \(Int(dropDistance)) m ahead of where you stood. Without spatial tracking it can only hold its bearing, not its distance."
     }
 
     // MARK: Anchor
 
-    /// Plants the clue in the direction the camera is currently facing, so it
-    /// lands in view the moment it appears.
+    /// Plants the clue straight ahead of the camera.
+    ///
+    /// With tracking running this is done in the local frame — camera position
+    /// plus forward times distance — so the drop is exact regardless of how poor
+    /// the GPS fix underneath it happens to be.
     private func dropAnchor() {
+        if let pose = tracker.pose, let origin = tracker.origin {
+            let bearing = GeoAR.cameraBearingDegrees(pose: pose) * .pi / 180
+            anchorOrigin = GeoAR.offset(
+                origin,
+                east: pose.position.x + sin(bearing) * dropDistance,
+                north: pose.position.y + cos(bearing) * dropDistance
+            )
+            return
+        }
+
         guard let user = userPoint else { return }
         let bearing = attitude.isAvailable
-            ? GeoAR.cameraBearingDegrees(matrix: attitude.matrix) + (location.declination ?? 0)
+            ? GeoAR.cameraBearingDegrees(
+                pose: GeoAR.pose(attitude: attitude.matrix, fieldOfViewDegrees: camera.fieldOfView)
+              ) + (location.declination ?? 0)
             : (location.heading ?? 0)
-        anchorOrigin = RouteBuilder.offset(user, distance: dropDistance, bearing: bearing)
+        anchorOrigin = RouteBuilder.offset(user, distance: dropDistance, bearing: bearing * .pi / 180)
     }
 
-    private var anchors: [ARAnchor] {
+    private var worldFrame: ARWorldFrame {
+        if tracker.isRunning, let origin = tracker.origin {
+            return ARWorldFrame(
+                pose: tracker.pose,
+                origin: origin,
+                declination: nil,
+                floorHeight: tracker.floorHeight,
+                overrides: [:]
+            )
+        }
+        return ARWorldFrame(
+            pose: attitude.isAvailable
+                ? GeoAR.pose(attitude: attitude.matrix, fieldOfViewDegrees: camera.fieldOfView)
+                : nil,
+            origin: userPoint,
+            declination: location.declination,
+            floorHeight: nil
+        )
+    }
+
+    private var anchors: [EvidenceAnchor] {
         guard let anchorOrigin else { return [] }
         return [
-            ARAnchor(
+            EvidenceAnchor(
                 id: SceneLabData.rehearsalAnchorID,
                 index: 1,
                 title: "Test Anchor",
@@ -582,20 +640,47 @@ struct ARRehearsalView: View {
     }
 
     private var userPoint: GeoPoint? {
+        if let tracked = tracker.trackedPoint {
+            return tracked
+        }
         if let fix = location.location {
             return GeoPoint(fix.coordinate)
         }
         return RouteBuilder.fallbackOrigin
     }
 
-    private var headingText: String {
-        guard let heading = location.heading else { return "—" }
-        return String(format: "%.0f°", heading)
+    private var trackingText: String {
+        switch tracker.mode {
+        case .unsupported: "compass only"
+        case .world: "spatial"
+        case .geo: "spatial + VPS"
+        }
     }
 
-    private var declinationText: String {
-        guard let declination = location.declination else { return "—" }
-        return String(format: "%+.1f°", declination)
+    private var qualityText: String {
+        switch tracker.quality {
+        case .starting: "starting"
+        case .limited(let reason): reason
+        case .good: "good"
+        }
+    }
+
+    private var floorText: String {
+        guard let floor = tracker.floorHeight else { return "assumed" }
+        return String(format: "%.2f m", floor)
+    }
+
+    private var originText: String {
+        guard tracker.origin != nil else { return "—" }
+        return String(format: "%.0f m", tracker.originAccuracy)
+    }
+
+    /// How far ARKit says you've walked from where the session began. If this
+    /// stays at zero while you cross the room, translation tracking is dead.
+    private var movedText: String {
+        guard let pose = tracker.pose else { return "—" }
+        let moved = (pose.position.x * pose.position.x + pose.position.y * pose.position.y).squareRoot()
+        return String(format: "%.2f m", moved)
     }
 
     private var accuracyText: String {

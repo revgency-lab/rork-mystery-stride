@@ -308,12 +308,17 @@ final class InvestigationEngine {
         award(next, pinnedToCurrentPosition: !isIndoor)
     }
 
-    /// Banks the next clue without GPS. The escape hatch for evidence that landed
-    /// somewhere unreachable — behind a fence, inside a building, or lost to drift.
-    func markNextClueFound() {
+    /// Banks the next clue without waiting for GPS proximity.
+    ///
+    /// The escape hatch for evidence that landed somewhere unreachable — behind a
+    /// fence, inside a building, or lost to drift. Pass `asOverride: false` when
+    /// the detective demonstrably reached the evidence by another means, such as
+    /// tapping it through the AR lens from inside the discovery radius: that is a
+    /// real find and shouldn't stain the record.
+    func markNextClueFound(asOverride: Bool = true) {
         guard phase == .active || phase == .paused, let next = nextClue else { return }
-        didUseOverride = true
-        award(next, pinnedToCurrentPosition: false)
+        if asOverride { didUseOverride = true }
+        award(next, pinnedToCurrentPosition: !asOverride && !isIndoor)
     }
 
     private func award(_ clue: Clue, pinnedToCurrentPosition: Bool) {

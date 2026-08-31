@@ -18,11 +18,25 @@ final class AttitudeService {
     /// False when the device can't supply north-referenced attitude.
     private(set) var isAvailable: Bool = false
 
-    /// Device→reference-frame rotation. Identity is replaced by a portrait,
-    /// north-facing pose so the first frame before motion data lands is sane.
+    /// How badly the magnetometer is being disturbed. Indoors, steel framing,
+    /// wiring and speaker magnets routinely drag this down, which is what makes a
+    /// bearing-based placement point at the wrong wall.
+    private(set) var fieldAccuracy: CMMagneticFieldCalibrationAccuracy = .uncalibrated
+
+    /// True when the compass is steady enough to be worth believing.
+    var isFieldTrustworthy: Bool {
+        fieldAccuracy == .high || fieldAccuracy == .medium
+    }
+
+    /// Device→reference-frame rotation, where the frame is x = magnetic north,
+    /// y = west, z = up.
+    ///
+    /// Seeded with a real portrait, north-facing pose — screen-right east, screen
+    /// up vertical, lens on north — so the first frame before motion data lands is
+    /// sane rather than mirrored.
     private(set) var matrix = CMRotationMatrix(
         m11: 0, m12: 0, m13: -1,
-        m21: 1, m22: 0, m23: 0,
+        m21: -1, m22: 0, m23: 0,
         m31: 0, m32: 1, m33: 0
     )
 
@@ -45,6 +59,7 @@ final class AttitudeService {
         isAvailable = true
         motion.startDeviceMotionUpdates(using: .xMagneticNorthZVertical, to: .main) { [weak self] data, _ in
             guard let self, let data else { return }
+            self.fieldAccuracy = data.magneticField.accuracy
             self.ingest(data.attitude.quaternion)
         }
     }

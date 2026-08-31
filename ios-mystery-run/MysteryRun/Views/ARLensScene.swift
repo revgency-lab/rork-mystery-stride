@@ -3,18 +3,55 @@
 //  MysteryRun
 //
 
-import CoreMotion
 import SwiftUI
+import simd
 
 /// One piece of evidence to pin in the world, independent of the investigation
 /// engine so the developer lab can rehearse with fabricated anchors.
-struct ARAnchor: Identifiable {
+///
+/// Deliberately not named `ARAnchor`: that name belongs to ARKit, and shadowing
+/// it silently breaks every `ARSessionDelegate` callback that takes one.
+struct EvidenceAnchor: Identifiable {
     let id: UUID
     let index: Int
     let title: String
     let symbolName: String
     let point: GeoPoint
     let isPrimary: Bool
+}
+
+/// Everything the lens needs to place evidence for one frame.
+///
+/// Both tracking backends collapse into this, so the scene never branches on
+/// which one is running: ARKit fills in a tracked pose, a real floor height and
+/// a true-north frame, while the compass fallback supplies rotation only and a
+/// magnetic frame that needs the declination applied.
+struct ARWorldFrame {
+    /// Live camera pose, or `nil` when nothing can be placed yet.
+    var pose: GeoAR.CameraPose?
+
+    /// Geo coordinate of the local frame's origin.
+    var origin: GeoPoint?
+
+    /// Magnetic declination to apply, or `nil` when the frame is already
+    /// true-north aligned (which ARKit's is).
+    var declination: Double?
+
+    /// Height of the real floor in the local frame. Falls back to an assumed eye
+    /// height when ARKit hasn't found a plane yet.
+    var floorHeight: Double?
+
+    /// Positions resolved by the Visual Positioning System, which outrank the
+    /// frame's own geodesy whenever they are present.
+    var overrides: [UUID: SIMD3<Double>] = [:]
+
+    /// True when position is genuinely tracked, so walking changes the distance.
+    var tracksTranslation: Bool { pose?.tracksTranslation ?? false }
+
+    var canPlace: Bool { pose != nil && origin != nil }
+
+    /// Ground level in the local frame.
+    var groundHeight: Double { floorHeight ?? -GeoAR.eyeHeight }
 }
 
 /// Draws evidence anchored to real ground positions over the camera feed.
@@ -24,22 +61,17 @@ struct ARAnchor: Identifiable {
 /// they shrink with distance exactly as a physical object would. That is what
 /// sells the illusion of something actually sitting on the pavement.
 struct ARLensScene: View {
-    let anchors: [ARAnchor]
-    let userPoint: GeoPoint?
-    let matrix: CMRotationMatrix
-    let declination: Double?
-    let fieldOfView: Double
-    let compassAvailable: Bool
-    var collectRadius: Double = 150
-    var onCollect: ((ARAnchor) -> Void)?
+    let anchors: [EvidenceAnchor]
+    let frame: ARWorldFrame
+    var collectRadius: Double = 30
+    var onCollect: ((EvidenceAnchor, Double) -> Void)?
 
     @State private var pulse: Bool = false
 
     var body: some View {
         GeometryReader { geometry in
             let size = geometry.size
-            let focal = GeoAR.focalLength(viewport: size, fieldOfViewDegrees: fieldOfView)
-            let resolved = resolve(in: size, focal: focal)
+            let resolved = resolve(in: size)
 
             ZStack {
                 ForEach(resolved) { item in
@@ -55,7 +87,7 @@ struct ARLensScene: View {
                             viewport: size,
                             pulse: pulse,
                             isCollectible: isCollectible(item),
-                            onCollect: { onCollect?(item.anchor) }
+                            onCollect: { onCollect?(item.anchor, item.distance) }
                         )
                     case let .edge(point, pointsRight):
                         EdgePointer(
@@ -72,7 +104,7 @@ struct ARLensScene: View {
                             diameter: diameter,
                             pulse: pulse,
                             isCollectible: isCollectible(item),
-                            onCollect: { onCollect?(item.anchor) }
+                            onCollect: { onCollect?(item.anchor, item.distance) }
                         )
                     }
                 }
@@ -92,52 +124,37 @@ struct ARLensScene: View {
 
     // MARK: - Placement
 
-    private func resolve(in size: CGSize, focal: CGFloat) -> [ResolvedAnchor] {
-        guard size.width > 1, let user = userPoint else { return [] }
+    private func resolve(in size: CGSize) -> [ResolvedAnchor] {
+        guard size.width > 1 else { return [] }
+
+        guard let pose = frame.pose, let origin = frame.origin else {
+            return centredFallback(in: size)
+        }
+
+        let focal = pose.focal(viewport: size)
+        let ground = frame.groundHeight
+        let air = ground + GeoAR.clueHeight
 
         return anchors.compactMap { anchor -> ResolvedAnchor? in
-            let distance = user.distance(to: anchor.point)
+            let flat = groundOffset(for: anchor, origin: origin)
+            let airTarget = SIMD3(flat.x, flat.y, air)
+            let distance = GeoAR.groundDistance(from: pose, to: airTarget)
 
-            guard compassAvailable else {
-                // No magnetometer: park the next clue in the middle so the approach
-                // still works, and hide the rest rather than lie about where they are.
-                guard anchor.isPrimary else { return nil }
-                return ResolvedAnchor(
-                    anchor: anchor,
-                    distance: distance,
-                    placement: .centred(
-                        point: CGPoint(x: size.width / 2, y: size.height * 0.44),
-                        diameter: clampedDiameter(distance: distance, focal: focal)
-                    )
-                )
-            }
+            let airPoint = GeoAR.project(airTarget, pose: pose, viewport: size, focal: focal)
 
-            let air = GeoAR.project(
-                from: user,
-                to: anchor.point,
-                heightAboveGround: GeoAR.clueHeight,
-                matrix: matrix,
-                viewport: size,
-                focal: focal,
-                declinationDegrees: declination
-            )
-
-            if let air, size.horizontallyContains(air) {
-                let ground = GeoAR.project(
-                    from: user,
-                    to: anchor.point,
-                    heightAboveGround: 0,
-                    matrix: matrix,
+            if let airPoint, size.horizontallyContains(airPoint) {
+                let groundPoint = GeoAR.project(
+                    SIMD3(flat.x, flat.y, ground),
+                    pose: pose,
                     viewport: size,
-                    focal: focal,
-                    declinationDegrees: declination
+                    focal: focal
                 )
                 return ResolvedAnchor(
                     anchor: anchor,
                     distance: distance,
                     placement: .world(
-                        ground: ground ?? CGPoint(x: air.x, y: air.y + 40),
-                        air: air,
+                        ground: groundPoint ?? CGPoint(x: airPoint.x, y: airPoint.y + 40),
+                        air: airPoint,
                         ringWidth: GeoAR.projectedSize(
                             metres: GeoAR.groundRingRadius * 2,
                             distance: distance,
@@ -151,20 +168,57 @@ struct ARLensScene: View {
             // Behind you or outside the frame: only the clue you're hunting earns
             // a chevron. Secondary evidence simply isn't drawn.
             guard anchor.isPrimary else { return nil }
-            let relative = GeoAR.relativeBearingDegrees(
-                trueBearing: GeoAR.bearingDegrees(from: user, to: anchor.point),
-                matrix: matrix,
-                declinationDegrees: declination
-            )
+            let relative = GeoAR.relativeBearingDegrees(to: airTarget, pose: pose)
             return ResolvedAnchor(
                 anchor: anchor,
                 distance: distance,
                 placement: .edge(
-                    point: GeoAR.edgePoint(relativeBearingDegrees: relative, viewport: size, focal: focal),
+                    point: GeoAR.edgePoint(
+                        relativeBearingDegrees: relative,
+                        viewport: size,
+                        focal: focal
+                    ),
                     pointsRight: relative >= 0
                 )
             )
         }
+    }
+
+    /// East/north position of an anchor in the local frame, preferring a
+    /// VPS-resolved position when one exists.
+    private func groundOffset(for anchor: EvidenceAnchor, origin: GeoPoint) -> SIMD2<Double> {
+        if let override = frame.overrides[anchor.id] {
+            return SIMD2(override.x, override.y)
+        }
+        let offset = GeoAR.localOffset(
+            from: origin,
+            to: anchor.point,
+            declinationDegrees: frame.declination
+        )
+        return SIMD2(offset.east, offset.north)
+    }
+
+    /// Nothing can be placed yet — park the clue being hunted in the middle so
+    /// the approach still works, and hide the rest rather than lie about them.
+    private func centredFallback(in size: CGSize) -> [ResolvedAnchor] {
+        let focal = GeoAR.focalLength(viewport: size, fieldOfViewDegrees: GeoAR.defaultFieldOfView)
+        return anchors.compactMap { anchor in
+            guard anchor.isPrimary else { return nil }
+            let distance = distanceWithoutTracking(to: anchor)
+            return ResolvedAnchor(
+                anchor: anchor,
+                distance: distance,
+                placement: .centred(
+                    point: CGPoint(x: size.width / 2, y: size.height * 0.44),
+                    diameter: clampedDiameter(distance: distance, focal: focal)
+                )
+            )
+        }
+    }
+
+    private func distanceWithoutTracking(to anchor: EvidenceAnchor) -> Double {
+        guard let origin = frame.origin else { return 0 }
+        return origin.distance(to: anchor.point)
     }
 
     /// Real-world sizing, floored so distant evidence stays tappable and capped so
@@ -184,7 +238,7 @@ private struct ResolvedAnchor: Identifiable {
         case centred(point: CGPoint, diameter: CGFloat)
     }
 
-    let anchor: ARAnchor
+    let anchor: EvidenceAnchor
     let distance: Double
     let placement: Placement
 
@@ -205,7 +259,7 @@ private extension CGSize {
 /// Evidence sitting on the street: a ring on the ground, a tether rising from it,
 /// and the artifact hovering above. The ring is the thing that reads as "here".
 private struct AnchoredCluePin: View {
-    let anchor: ARAnchor
+    let anchor: EvidenceAnchor
     let distance: Double
     let groundPoint: CGPoint
     let airPoint: CGPoint
@@ -329,7 +383,7 @@ private struct AnchoredCluePin: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
 
-            Text(isCollectible ? "TAP TO COLLECT" : "\(Int(distance.rounded())) M AWAY")
+            Text(isCollectible ? "TAP TO COLLECT" : "\(distanceText) AWAY")
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundStyle(isCollectible ? Theme.ink : tint)
                 .padding(.horizontal, 9)
@@ -353,12 +407,19 @@ private struct AnchoredCluePin: View {
         )
         .allowsHitTesting(false)
     }
+
+    /// Close range is where precision shows, so it earns a decimal.
+    private var distanceText: String {
+        distance < 10
+            ? String(format: "%.1f M", distance)
+            : "\(Int(distance.rounded())) M"
+    }
 }
 
 // MARK: - Off-screen pointer
 
 private struct EdgePointer: View {
-    let anchor: ARAnchor
+    let anchor: EvidenceAnchor
     let distance: Double
     let point: CGPoint
     let pointsRight: Bool
@@ -389,10 +450,10 @@ private struct EdgePointer: View {
     }
 }
 
-// MARK: - Compass-less fallback
+// MARK: - Untracked fallback
 
 private struct CentredCluePin: View {
-    let anchor: ARAnchor
+    let anchor: EvidenceAnchor
     let distance: Double
     let point: CGPoint
     let diameter: CGFloat

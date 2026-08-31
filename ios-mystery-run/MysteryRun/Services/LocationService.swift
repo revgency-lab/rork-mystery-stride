@@ -15,6 +15,10 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
 
     private(set) var location: CLLocation?
     private(set) var heading: CLLocationDirection?
+    /// Compass error in degrees, or `nil` when the heading can't be trusted at
+    /// all. Indoors this routinely blows out past 20°, which is what makes a
+    /// compass-only AR placement point at the wrong wall.
+    private(set) var headingAccuracy: Double?
     private(set) var authorizationStatus: CLAuthorizationStatus = .notDetermined
     private(set) var isTracking: Bool = false
     /// True once we've waited for a fix and given up, so the UI can explain itself.
@@ -59,6 +63,46 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
     private(set) var declination: Double?
 
     var hasRealFix: Bool { location != nil }
+
+    /// True when the compass is reliable enough to place evidence by bearing.
+    var isHeadingTrustworthy: Bool {
+        guard let headingAccuracy else { return false }
+        return headingAccuracy >= 0 && headingAccuracy <= 20
+    }
+
+    /// Number of screens currently asking for uninterrupted fixes.
+    private var preciseRequests: Int = 0
+
+    /// Asks for every fix the hardware can produce.
+    ///
+    /// The normal 5 m distance filter is right for a long run — it saves battery
+    /// and the game only cares about hundred-metre proximities. It is exactly
+    /// wrong for the AR lens, where a three metre approach would deliver no
+    /// updates at all and then arrive as a single jump.
+    func beginPreciseUpdates() {
+        preciseRequests += 1
+        guard preciseRequests == 1 else { return }
+        manager.distanceFilter = kCLDistanceFilterNone
+        manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+        guard isAuthorized else { return }
+        manager.startUpdatingLocation()
+        if CLLocationManager.headingAvailable() {
+            manager.startUpdatingHeading()
+        }
+    }
+
+    /// Returns to the battery-friendly cadence once no screen needs precision.
+    func endPreciseUpdates() {
+        guard preciseRequests > 0 else { return }
+        preciseRequests -= 1
+        guard preciseRequests == 0 else { return }
+        manager.distanceFilter = 5
+        manager.desiredAccuracy = kCLLocationAccuracyBest
+        if !isTracking {
+            manager.stopUpdatingLocation()
+            manager.stopUpdatingHeading()
+        }
+    }
 
     func requestPermission() {
         guard authorizationStatus == .notDetermined else { return }
@@ -130,6 +174,11 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let latest = locations.last else { return }
+        // A fix with no accuracy, a wild accuracy, or a stale timestamp is worse
+        // than no fix at all: accepted at face value it teleports every anchor.
+        guard latest.horizontalAccuracy > 0, latest.horizontalAccuracy < 150 else { return }
+        guard abs(latest.timestamp.timeIntervalSinceNow) < 30 else { return }
+
         Task { @MainActor in
             self.location = latest
             self.accuracy = latest.horizontalAccuracy
@@ -142,8 +191,10 @@ final class LocationService: NSObject, CLLocationManagerDelegate {
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
         let value = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
+        let accuracy = newHeading.headingAccuracy
         Task { @MainActor in
             self.heading = value
+            self.headingAccuracy = accuracy >= 0 ? accuracy : nil
             if newHeading.trueHeading >= 0 {
                 var declination = newHeading.trueHeading - newHeading.magneticHeading
                 if declination > 180 { declination -= 360 }
