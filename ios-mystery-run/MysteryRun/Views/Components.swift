@@ -81,32 +81,53 @@ struct MetricBlock: View {
     }
 }
 
-/// Row of evidence icons showing which clues are already in the file. Long cases
-/// carry up to 20 clues, so the track wraps onto extra rows instead of squeezing
-/// every chip off the edge of the screen.
+/// Progress across a case's evidence. Short cases show icon chips; long ones
+/// collapse to a tick bar, because twenty legible chips do not fit on a phone.
+/// Both forms span exactly the width available at any clue count.
 struct EvidenceTrackRow: View {
     let clues: [Clue]
 
-    private var chipSide: CGFloat {
-        switch clues.count {
-        case ...8: 48
-        case 9...14: 40
-        default: 34
-        }
-    }
-
-    private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: chipSide, maximum: chipSide * 1.5), spacing: 8)]
-    }
+    /// Past this count chips get too small to read, so the bar takes over.
+    private var usesChips: Bool { clues.count <= 10 }
 
     var body: some View {
-        LazyVGrid(columns: columns, spacing: 8) {
-            ForEach(clues) { clue in
-                EvidenceChip(clue: clue, side: chipSide)
+        Group {
+            if usesChips {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 44, maximum: 60), spacing: 8)],
+                    spacing: 8
+                ) {
+                    ForEach(clues) { clue in
+                        EvidenceChip(clue: clue, side: 46)
+                    }
+                }
+            } else {
+                tickBar
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(clues.filter(\.isFound).count) of \(clues.count) clues found")
+    }
+
+    /// One flexible tick per clue: the row fits any count without overflowing,
+    /// and pivotal evidence reads taller and violet.
+    private var tickBar: some View {
+        HStack(spacing: 3) {
+            ForEach(clues) { clue in
+                RoundedRectangle(cornerRadius: 2.5)
+                    .fill(tickColor(for: clue))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: clue.isPivotal ? 16 : 10)
+            }
+        }
+        .frame(height: 16)
+    }
+
+    private func tickColor(for clue: Clue) -> Color {
+        if clue.isFound {
+            return clue.isPivotal ? Theme.violet : Theme.brass
+        }
+        return Color.white.opacity(0.14)
     }
 }
 
@@ -270,30 +291,40 @@ struct TornPaper: Shape {
 }
 
 /// Warm overhead spotlight used on reveal and resolution screens.
+///
+/// The ink colour is the size anchor: a `.fill` photograph reports a layout frame
+/// wider than the screen, which previously stretched every sibling view and pushed
+/// content off both edges. Keeping the image in a clipped overlay pins the frame.
 struct SpotlightBackdrop: View {
     var body: some View {
-        ZStack {
-            Theme.ink
-            if UIImage(named: AppAsset.deskSpotlight) != nil {
-                Image(AppAsset.deskSpotlight)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .opacity(0.9)
-                    .allowsHitTesting(false)
+        Theme.ink
+            .overlay {
+                if UIImage(named: AppAsset.deskSpotlight) != nil {
+                    Image(AppAsset.deskSpotlight)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .opacity(0.5)
+                        .allowsHitTesting(false)
+                }
             }
-            LinearGradient(
-                colors: [Theme.brass.opacity(0.22), .clear],
-                startPoint: .top,
-                endPoint: .center
-            )
-            RadialGradient(
-                colors: [.clear, Color.black.opacity(0.7)],
-                center: .init(x: 0.5, y: 0.32),
-                startRadius: 120,
-                endRadius: 520
-            )
-        }
-        .ignoresSafeArea()
+            .overlay {
+                LinearGradient(
+                    colors: [Theme.brass.opacity(0.20), .clear],
+                    startPoint: .top,
+                    endPoint: .center
+                )
+            }
+            .overlay {
+                // Heavy vignette keeps body copy legible over the busy wood grain.
+                RadialGradient(
+                    colors: [Color.black.opacity(0.25), Color.black.opacity(0.86)],
+                    center: .init(x: 0.5, y: 0.3),
+                    startRadius: 60,
+                    endRadius: 520
+                )
+            }
+            .clipped()
+            .ignoresSafeArea()
     }
 }
 
