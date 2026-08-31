@@ -22,6 +22,11 @@ final class CameraService {
 
     private(set) var status: Status = .idle
 
+    /// Horizontal field of view of the active format, degrees, measured across the
+    /// sensor's long axis. The AR projection needs the real value — guessing it
+    /// wrong is what makes pinned evidence slide instead of staying anchored.
+    private(set) var fieldOfView: Double = GeoAR.defaultFieldOfView
+
     let session = AVCaptureSession()
 
     func start() {
@@ -83,6 +88,11 @@ final class CameraService {
 
         session.addInput(input)
         session.commitConfiguration()
+
+        // Externally injected cameras often report 0 here, so keep the fallback.
+        let reported = Double(device.activeFormat.videoFieldOfView)
+        fieldOfView = reported > 1 ? reported : GeoAR.defaultFieldOfView
+
         if !session.isRunning { session.startRunning() }
         status = .running
     }

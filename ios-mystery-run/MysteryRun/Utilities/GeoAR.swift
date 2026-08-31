@@ -3,19 +3,49 @@
 //  MysteryRun
 //
 
+import CoreGraphics
 import CoreMotion
 import Foundation
-import CoreGraphics
 
 /// Camera-geometry helpers for the AR lens. Pure functions so the projection
 /// math stays testable and free of view state.
 enum GeoAR {
-    /// Approximate horizontal field of view of the rear wide camera, radians.
-    /// Close enough for pinning street-level evidence; exact intrinsics vary by model.
-    static let horizontalFOV: Double = 65 * .pi / 180
+    /// Fallback field of view for the rear wide camera, degrees, measured across
+    /// the sensor's long axis. Only used when the capture device won't report one.
+    static let defaultFieldOfView: Double = 68
 
     /// Assume the phone's eye is about this far above the ground, metres.
     static let eyeHeight: Double = 1.6
+
+    /// How high above the street evidence hovers, metres.
+    static let clueHeight: Double = 1.3
+
+    /// Radius of the glowing ring painted on the ground, metres.
+    static let groundRingRadius: Double = 1.1
+
+    /// Focal length in screen points for the live preview.
+    ///
+    /// `AVCaptureDevice.Format.videoFieldOfView` is the **horizontal** angle across
+    /// the sensor's long axis. The preview is rotated 90° into portrait, so that
+    /// axis runs down the screen — and because every iPhone screen is narrower
+    /// relative to its height than any capture format, `.resizeAspectFill` matches
+    /// the video to the screen HEIGHT and crops the sides.
+    ///
+    /// So screen height, not width, is what the quoted angle spans. Deriving the
+    /// focal length from the width (as this once did) understates it by more than
+    /// 2x, which makes pinned evidence drift across the frame as the phone turns
+    /// instead of staying put.
+    static func focalLength(viewport: CGSize, fieldOfViewDegrees: Double) -> CGFloat {
+        let degrees = min(max(fieldOfViewDegrees, 30), 120)
+        let radians = degrees * .pi / 180
+        let height = max(viewport.height, 1)
+        return (height / 2) / CGFloat(tan(radians / 2))
+    }
+
+    /// Half of the horizontal angle actually visible on screen, radians.
+    static func horizontalHalfAngle(viewport: CGSize, focal: CGFloat) -> Double {
+        atan(Double(max(viewport.width, 1) / 2 / max(focal, 1)))
+    }
 
     /// True bearing in degrees from one point to another (0 = north, clockwise).
     static func bearingDegrees(from origin: GeoPoint, to target: GeoPoint) -> Double {
@@ -31,12 +61,6 @@ enum GeoAR {
 
     /// Projects a point into screen space using the live device attitude.
     ///
-    /// - Parameters:
-    ///   - origin: the detective's current position.
-    ///   - target: the point being pinned.
-    ///   - heightAboveGround: how high above the street to hover, metres.
-    ///   - declinationDegrees: magnetic declination so the magnetometer frame
-    ///     (north-referenced) agrees with true bearings.
     /// - Returns: the projected point, or `nil` when the target sits behind the camera.
     static func project(
         from origin: GeoPoint,
@@ -44,30 +68,14 @@ enum GeoAR {
         heightAboveGround: Double,
         matrix: CMRotationMatrix,
         viewport: CGSize,
+        focal: CGFloat,
         declinationDegrees: Double?
     ) -> CGPoint? {
-        let lat1 = origin.latitude * .pi / 180
-        let dLat = (target.latitude - origin.latitude) * .pi / 180
-        let dLon = (target.longitude - origin.longitude) * .pi / 180
-
-        var east = dLon * 6_371_000 * cos(lat1)
-        var north = dLat * 6_371_000
-
-        // The attitude reference frame is magnetic-north based; rotate the flat
-        // components by declination so both sides of the math agree on "north".
-        if let declinationDegrees {
-            let radians = -declinationDegrees * .pi / 180
-            let cosD = cos(radians)
-            let sinD = sin(radians)
-            let rotatedEast = east * cosD - north * sinD
-            let rotatedNorth = east * sinD + north * cosD
-            east = rotatedEast
-            north = rotatedNorth
-        }
-
+        let local = localOffset(from: origin, to: target, declinationDegrees: declinationDegrees)
         let up = heightAboveGround - eyeHeight
-        // Reference frame (xMagneticNorthZAxis): x = magnetic north, y = west, z = up.
-        let ref = SIMD3(north, -east, up)
+
+        // Reference frame (xMagneticNorthZVertical): x = magnetic north, y = west, z = up.
+        let ref = SIMD3(local.north, -local.east, up)
 
         // v_device = Rᵗ · v_ref — the rotation matrix maps device axes into the
         // reference frame, so the transpose pulls world directions into camera space.
@@ -81,44 +89,81 @@ enum GeoAR {
         let depth = -device.z
         guard depth > 0.05 else { return nil }
 
-        let focal = (viewport.width / 2) / tan(horizontalFOV / 2)
         return CGPoint(
-            x: viewport.width / 2 + focal * device.x / depth,
-            y: viewport.height / 2 - focal * device.y / depth
+            x: viewport.width / 2 + focal * CGFloat(device.x / depth),
+            y: viewport.height / 2 - focal * CGFloat(device.y / depth)
         )
     }
 
-    /// Scale a marker by distance so far clues read small and close ones loom.
-    static func markerScale(forDistance metres: Double) -> CGFloat {
-        let raw = 38 / max(metres, 4)
-        return CGFloat(min(max(raw, 0.45), 2.2))
+    /// Flat east/north offset in metres, rotated so the magnetometer's idea of
+    /// north agrees with the true bearings used everywhere else in the app.
+    static func localOffset(
+        from origin: GeoPoint,
+        to target: GeoPoint,
+        declinationDegrees: Double?
+    ) -> (east: Double, north: Double) {
+        let lat1 = origin.latitude * .pi / 180
+        let dLat = (target.latitude - origin.latitude) * .pi / 180
+        let dLon = (target.longitude - origin.longitude) * .pi / 180
+
+        var east = dLon * 6_371_000 * cos(lat1)
+        var north = dLat * 6_371_000
+
+        if let declinationDegrees {
+            let radians = -declinationDegrees * .pi / 180
+            let cosD = cos(radians)
+            let sinD = sin(radians)
+            let rotatedEast = east * cosD - north * sinD
+            let rotatedNorth = east * sinD + north * cosD
+            east = rotatedEast
+            north = rotatedNorth
+        }
+        return (east, north)
     }
 
-    /// Where to park an off-screen chevron pointing at a bearing: clamped to the
-    /// horizontal edge of the view in the target's direction.
-    static func edgePoint(
-        bearingDegrees: Double,
-        matrix: CMRotationMatrix,
-        viewport: CGSize
-    ) -> CGPoint {
-        // Camera forward is the negative of the device z axis (third matrix column
-        // in reference coordinates: north, west, up).
+    /// Where the camera is pointing, as a magnetic bearing in degrees.
+    static func cameraBearingDegrees(matrix: CMRotationMatrix) -> Double {
+        // Camera forward is −z of the device, expressed in reference coordinates
+        // (north, west, up) by the third column of the rotation matrix.
         let forwardNorth = -matrix.m13
         let forwardWest = -matrix.m23
-        let forwardEast = -forwardWest
-        var cameraBearing = atan2(forwardEast, forwardNorth) * 180 / .pi
+        let bearing = atan2(-forwardWest, forwardNorth) * 180 / .pi
+        return bearing < 0 ? bearing + 360 : bearing
+    }
 
-        var relative = bearingDegrees - cameraBearing
+    /// Signed angle from the camera's centre line to a target, −180...180 degrees.
+    ///
+    /// The target bearing is true and the camera bearing is magnetic, so the
+    /// declination has to come off one of them before they can be compared.
+    static func relativeBearingDegrees(
+        trueBearing: Double,
+        matrix: CMRotationMatrix,
+        declinationDegrees: Double?
+    ) -> Double {
+        let magneticTarget = trueBearing - (declinationDegrees ?? 0)
+        var relative = magneticTarget - cameraBearingDegrees(matrix: matrix)
         while relative > 180 { relative -= 360 }
         while relative < -180 { relative += 360 }
+        return relative
+    }
 
-        let halfFOV = horizontalFOV / 2
-        let clamped = max(-halfFOV + 0.05, min(halfFOV - 0.05, relative * .pi / 180))
-        let fraction = tan(clamped) / tan(halfFOV)
-
+    /// Parks an off-screen chevron on the horizontal edge nearest the target.
+    static func edgePoint(
+        relativeBearingDegrees relative: Double,
+        viewport: CGSize,
+        focal: CGFloat
+    ) -> CGPoint {
+        let half = horizontalHalfAngle(viewport: viewport, focal: focal)
+        let clamped = max(-half + 0.02, min(half - 0.02, relative * .pi / 180))
+        let fraction = tan(clamped) / tan(half)
         return CGPoint(
-            x: viewport.width / 2 + fraction * viewport.width / 2,
-            y: viewport.height * 0.42
+            x: viewport.width / 2 + CGFloat(fraction) * viewport.width / 2,
+            y: viewport.height * 0.46
         )
+    }
+
+    /// On-screen size of something `metres` across sitting `distance` away.
+    static func projectedSize(metres: Double, distance: Double, focal: CGFloat) -> CGFloat {
+        CGFloat(metres) * focal / CGFloat(max(distance, 1.2))
     }
 }
