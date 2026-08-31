@@ -4,11 +4,20 @@
 //
 
 import SwiftUI
+import UIKit
 
 /// Names of the bundled noir art assets.
 enum AppAsset {
     static let paperTexture = "aged_manila_paper_texture"
     static let deskSpotlight = "detective_desk_spotlight"
+    static let rankCrest = "detective_badge_fedora"
+    static let plasterTexture = "noir_plaster_texture_bg"
+
+    /// True when the named art actually shipped in the bundle, so every screen
+    /// can fall back to drawn artwork instead of rendering an empty frame.
+    static func exists(_ name: String) -> Bool {
+        UIImage(named: name) != nil
+    }
 }
 
 /// Central noir case-file palette and shared metrics used across every screen.

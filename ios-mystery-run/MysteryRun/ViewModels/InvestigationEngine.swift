@@ -157,6 +157,11 @@ final class InvestigationEngine {
     @discardableResult
     func finish() -> CaseRecord? {
         guard let mysteryCase else { return nil }
+        // Filing is a one-way door. A second tap on the confirmation before it
+        // dismisses, or any other re-entry, hands back the record already filed
+        // instead of closing the same investigation twice.
+        guard phase != .finished else { return lastRecord }
+
         ticker?.cancel()
         ticker = nil
         location.stopTracking()
@@ -164,7 +169,9 @@ final class InvestigationEngine {
 
         let record = store.closeCase(mysteryCase, distance: distance, duration: elapsed)
         lastRecord = record
-        store.setActiveCase(mysteryCase)
+        // The case now lives in the history; leaving it on the board as well is
+        // what allowed a closed case to be walked and filed all over again.
+        store.setActiveCase(nil)
         store.clearSession()
         return record
     }

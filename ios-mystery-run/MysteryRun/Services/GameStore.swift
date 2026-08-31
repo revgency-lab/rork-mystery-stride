@@ -30,8 +30,20 @@ final class GameStore {
         sessionURL = directory.appendingPathComponent("live-session.json")
 
         profile = GameStore.load(DetectiveProfile.self, from: profileURL) ?? DetectiveProfile()
-        history = GameStore.load([CaseRecord].self, from: historyURL) ?? []
         activeCase = GameStore.load(MysteryCase.self, from: activeCaseURL)
+
+        // Files saved before closing became idempotent can hold the same case
+        // more than once. Collapse them on load, otherwise the history list is
+        // rendering repeated identifiers and the XP is inflated by the copies.
+        let storedHistory = GameStore.load([CaseRecord].self, from: historyURL) ?? []
+        history = GameStore.deduplicated(storedHistory)
+        if history.count != storedHistory.count {
+            let honestXP = history.reduce(0) { $0 + $1.xpEarned }
+            // Only ever correct downwards — never hand out XP during a repair.
+            if profile.xp > honestXP { profile.xp = honestXP }
+            GameStore.save(history, to: historyURL)
+            GameStore.save(profile, to: profileURL)
+        }
 
         let session = GameStore.load(SessionSnapshot.self, from: sessionURL)
         // Only offer to resume a session that still matches the case on the board.
@@ -86,23 +98,35 @@ final class GameStore {
     }
 
     /// Files a finished (or abandoned) investigation and awards XP.
+    ///
+    /// A case occupies exactly one slot in the history for its whole life. If it
+    /// is closed again — a double-tapped confirmation, a restored session that
+    /// ends a second time — the existing file is rewritten in place and only the
+    /// XP difference is awarded, rather than stacking a second copy.
     @discardableResult
     func closeCase(
         _ mysteryCase: MysteryCase,
         distance: Double,
         duration: TimeInterval
     ) -> CaseRecord {
+        let existingIndex = history.firstIndex { $0.id == mysteryCase.id }
+        let isRefiling = existingIndex != nil
+
         let found = mysteryCase.foundClues
         var xp = found.reduce(0) { $0 + $1.xp }
         let solved = found.count == mysteryCase.clues.count
         if solved { xp += 250 }
 
         if solved {
-            applyStreak()
+            // The streak counts cases, not filings, so a re-close must not
+            // advance it a second time.
+            if !isRefiling { applyStreak() }
             if profile.streak >= 3 { xp += 50 }
         }
 
-        profile.xp += xp
+        let alreadyAwarded = existingIndex.map { history[$0].xpEarned } ?? 0
+        profile.xp = max(0, profile.xp - alreadyAwarded + xp)
+
         let record = CaseRecord(
             id: mysteryCase.id,
             number: mysteryCase.number,
@@ -112,7 +136,8 @@ final class GameStore {
             premise: mysteryCase.premise,
             solution: mysteryCase.solution,
             locationName: mysteryCase.locationName,
-            closedAt: Date(),
+            // Keep the moment the case was originally put to bed.
+            closedAt: existingIndex.map { history[$0].closedAt } ?? Date(),
             distance: distance,
             duration: duration,
             mode: mysteryCase.mode,
@@ -121,8 +146,12 @@ final class GameStore {
             xpEarned: xp,
             clues: mysteryCase.clues
         )
-        history.insert(record, at: 0)
-        if history.count > 60 { history.removeLast(history.count - 60) }
+        if let existingIndex {
+            history[existingIndex] = record
+        } else {
+            history.insert(record, at: 0)
+            if history.count > 60 { history.removeLast(history.count - 60) }
+        }
 
         persistProfile()
         persistHistory()
@@ -186,6 +215,13 @@ final class GameStore {
         } else {
             try? FileManager.default.removeItem(at: activeCaseURL)
         }
+    }
+
+    /// Keeps the first record filed under each case id. History is newest-first,
+    /// so that is the most recent version of the file.
+    private static func deduplicated(_ records: [CaseRecord]) -> [CaseRecord] {
+        var seen: Set<UUID> = []
+        return records.filter { seen.insert($0.id).inserted }
     }
 
     private static func load<T: Decodable>(_ type: T.Type, from url: URL) -> T? {
