@@ -75,6 +75,12 @@ nonisolated enum CaseGenerator {
         let title = render(archetype.titles.randomElement(using: &rng) ?? "Untitled Case", tokens: tokens)
         let premise = render(archetype.premises.randomElement(using: &rng) ?? "", tokens: tokens)
         let conclusion = render(archetype.conclusions.randomElement(using: &rng) ?? "", tokens: tokens)
+        var solution = render(archetype.narratives.randomElement(using: &rng) ?? "", tokens: tokens)
+        if includeTwist {
+            // The planted evidence only makes sense in hindsight, so the account
+            // has to own up to it rather than quietly leave it out.
+            solution += " One piece of what you recovered was never real. It was placed early on the trail to send the search the wrong way, and it worked for exactly as long as \(tokens["culprit"] ?? "the culprit") needed it to."
+        }
         let twistNote: String? = includeTwist
             ? "One piece of evidence in this file was left to be found. Treat the first thing you see with suspicion."
             : nil
@@ -88,6 +94,7 @@ nonisolated enum CaseGenerator {
             mode: mode,
             clues: clues,
             conclusion: conclusion,
+            solution: solution,
             twistNote: twistNote,
             route: route,
             plannedDistance: plannedDistance,

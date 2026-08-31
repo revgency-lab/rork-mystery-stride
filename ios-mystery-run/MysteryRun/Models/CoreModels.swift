@@ -105,6 +105,9 @@ nonisolated struct MysteryCase: Identifiable, Codable, Hashable, Sendable {
     var mode: SessionMode
     var clues: [Clue]
     var conclusion: String
+    /// The narrated account of what actually happened, shown once the case is
+    /// closed. Optional so files saved before it existed still decode.
+    var solution: String?
     var twistNote: String?
     var route: [GeoPoint]
     var plannedDistance: Double
@@ -152,6 +155,12 @@ nonisolated struct CaseRecord: Identifiable, Codable, Hashable, Sendable {
     var title: String
     var photoAsset: String
     var conclusion: String
+    /// The brief as it was originally handed over, kept so a closed file can
+    /// still be read from the beginning.
+    var premise: String?
+    /// The narrated resolution. Optional for records filed before it existed.
+    var solution: String?
+    var locationName: String?
     var closedAt: Date
     var distance: Double
     var duration: TimeInterval

@@ -34,6 +34,10 @@ nonisolated struct CaseArchetype: Sendable {
     let premises: [String]
     let beats: [ProofBeat]
     let conclusions: [String]
+    /// The full prose account of what actually happened, in order. The clue
+    /// deductions are the fragments the detective recovered; this is the story
+    /// those fragments were always pieces of.
+    let narratives: [String]
 }
 
 /// Physical flavour of the neighbourhood the case is set in.
@@ -329,6 +333,10 @@ enum CaseLibrary {
             conclusions: [
                 "THE {roleTitleUpper} STAGED THEIR OWN DISAPPEARANCE TO VANISH WITH {itemUpper}.",
                 "NOBODY TOOK THE {roleTitleUpper}. THE {roleTitleUpper} TOOK {itemUpper} AND WALKED."
+            ],
+            narratives: [
+                "{name} was never taken. For weeks before the night in question, the {role} had been moving their real life into a locker near {landmark}, one bag at a time. On the night itself they arranged a meeting nobody was told about, left a phone behind to fix their last known position at {time}, and dressed the scene with theatre makeup bought for exactly that purpose. While the district dragged the water, the {role} was holding a one-way ticket bought in cash — and {item}, signed out on paperwork under a name that no longer works here. What they were running from was {motive}.",
+                "Strip away the panic and the night reads plainly. The {role} planned their exit carefully: a locker packed near {landmark}, a meeting arranged in writing, a phone abandoned to place them at {time}. The blood at the scene came out of a makeup tin. The only thing genuinely missing was {item}, and it left with them, pushed along by {motive}. Everyone spent that night searching for a body. There was never going to be one."
             ]
         ),
         CaseArchetype(
@@ -381,6 +389,10 @@ enum CaseLibrary {
             conclusions: [
                 "{culpritUpper} TOOK {itemUpper} FROM THE INSIDE AND LET THE STREET TAKE THE BLAME.",
                 "THERE WAS NO BREAK-IN. {culpritUpper} SIMPLY UNLOCKED THE DOOR."
+            ],
+            narratives: [
+                "Nothing was forced because nothing needed to be. Someone with legitimate access to {landmark} cut a key from a blank days in advance, then studied the patrol sheet until they found the single unwatched gap at {time}. {item} was written off the books before it ever moved — the same weight entered twice, in two different hands. The soft-soled prints by the service door belonged to somebody who was already inside when the doors were locked for the night. It was {culprit}, working off {motive}, and the street was left to carry the blame.",
+                "The break-in everyone described never happened. {culprit} either held the keys to {landmark} or had them copied, and built the night around the one patrol round that left the place unwatched at {time}. The ledger was doctored so {item} disappeared on paper before it disappeared in fact. A debt that was crushing on Monday was quietly settled by Thursday, which is the whole story in one line: {motive}."
             ]
         ),
         CaseArchetype(
@@ -433,6 +445,10 @@ enum CaseLibrary {
             conclusions: [
                 "{culpritUpper} HAD BEEN SELLING SILENCE FOR THREE YEARS — UNTIL THE PRICE WAS REFUSED.",
                 "THE BLACKMAIL WAS THE MOTIVE, AND {culpritUpper} HELD THE PEN."
+            ],
+            narratives: [
+                "For thirty-one months {name} paid the same sum, on the same day, to the same person, and never once wrote down why. The leverage was a strip of film — two figures at {landmark}, an envelope changing hands, proof of {motive}. The payments were never a robbery; they were a standing arrangement, and the room where the letters were written was rented in {culprit}'s name. On the last night the handover turned into an argument in the gravel near {landmark}, around {time}. {name} had finally refused to pay, and {culprit} could not afford that answer.",
+                "This was never about a single night. {culprit} had been selling silence to {name} for three years at a fixed price on a fixed date, with a photograph taken at {landmark} to keep the arrangement honest. Your route walks the whole run of it: the unsigned letters, the identical withdrawals, the room leased in {culprit}'s name, and finally the scuffed ground where the last payment was refused at {time}. The blackmail was the motive all along, and it ended the moment the money did."
             ]
         ),
         CaseArchetype(
@@ -485,6 +501,10 @@ enum CaseLibrary {
             conclusions: [
                 "{culpritUpper} RAN THE CHAIN, AND {itemUpper} NEVER EXISTED ON PAPER AT ALL.",
                 "THE FREIGHT WAS REAL. THE MANIFEST WAS THE LIE — AND {culpritUpper} WROTE IT."
+            ],
+            narratives: [
+                "{item} moved through {place} week after week, and none of it existed on paper. The chain worked in pairs: every drop had two people who never travelled together, so nobody carried more than a single link of it. A two-minute silence in the radio log at {time} each Thursday was the handover window, and the tags, coins and pencil marks along your route count the drops off in order. It only held together because {culprit} signed the manifests that made the freight vanish — {motive} being the reason the pen kept moving.",
+                "Walk the route and the operation lays itself out end to end. Cargo entered {place} unweighed and unsigned, changed hands during a scheduled two-minute gap in the radio at {time}, and left again by a route that officially doesn't run here. Six pencil marks in a matchbook, six drops. The badge at the end of the chain names the only person who could sign it all into non-existence: {culprit}, kept loyal by {motive}."
             ]
         ),
         CaseArchetype(
@@ -537,6 +557,10 @@ enum CaseLibrary {
             conclusions: [
                 "THE MAN FOUND AT {landmarkTitleUpper} WAS NEVER THE {roleTitleUpper} — THE SWAP WAS THE WHOLE POINT.",
                 "AN IDENTITY WAS BORROWED FOR ONE NIGHT SO {culpritUpper} COULD MOVE {itemUpper} UNSEEN."
+            ],
+            narratives: [
+                "The man found near {landmark} was identified by his coat, and the coat was borrowed. The badge in its pocket belonged to someone who resigned in spring; the prints pressed into the concrete were two sizes too small for the {role} everybody named. The {role} was still travelling at {time} and could not have been there at all. The swap was arranged in writing, for one night only, and it held exactly long enough for {culprit} to move {item} while the entire district stared at the wrong name.",
+                "Two men, near enough identical from behind, agreed in a letter to trade places for a single night. That was the whole trick. Everything along your route pulls the identification apart: a badge belonging to a resignation, footprints too small for the coat, a ticket placing the {role} elsewhere at {time}, and a room leased under a name nobody recognised. The confusion was manufactured on purpose, and {culprit} used it to move {item} unseen for {motive}."
             ]
         ),
         CaseArchetype(
@@ -589,6 +613,10 @@ enum CaseLibrary {
             conclusions: [
                 "IT WAS NEVER A FAULT. {culpritUpper} CUT THE LINE TO COLLECT ON IT.",
                 "THE {roleTitleUpper} WAS BLAMED FOR SABOTAGE ARRANGED BY {culpritUpper}."
+            ],
+            narratives: [
+                "The failure at {landmark} was called an accident inside the hour, which was the first thing wrong with it. Wear doesn't cut a cable clean; a tool does. A maintenance sheet was signed off at {time} for work that was never carried out, which gave someone an unquestioned reason to be alone at the line, and the glove with its fingertips cut away belonged to a person who knew precisely which cable to reach for. The insurance value had been raised a fortnight earlier. The {role} took the blame, but the arrangement was {culprit}'s, and the reason was {motive}.",
+                "It was engineered, and the paperwork gives away the order of events. Cover was increased two weeks in advance. A maintenance visit was signed off before it happened. The line was cut with a tool during the {time} shift by the only person on site. Then the whole thing was declared an accident fast enough to stop anyone looking closely. The {role} was simply the convenient name to hang it on — {culprit} cut the line in order to collect on it, driven by {motive}."
             ]
         ),
         CaseArchetype(
@@ -641,6 +669,10 @@ enum CaseLibrary {
             conclusions: [
                 "{itemUpper} WAS FORGED, AND {culpritUpper} WROTE EVERY WORD OF IT.",
                 "THERE WAS NO HEIR. {culpritUpper} INVENTED ONE AND SIGNED FOR THEM."
+            ],
+            narratives: [
+                "{item} surfaced two days after the funeral because that is when it was made. The signature was practised eleven times down a margin, each attempt closer than the last; the aged paper and iron-gall ink were bought from a stationer after the death. The witnesses who swore they were abroad were photographed at {landmark} that same week and paid to keep saying it. The real papers had already been lifted from the strongbox before anyone thought to check. The heir was never a stranger — they were in {place} the entire time. {culprit} wrote the document, the witness list and the division of the estate, all in one hand, for {motive}.",
+                "There was no late change of heart and no distant heir. Everything about {item} was manufactured after the funeral: materials dated wrong, a signature rehearsed in the margin, witnesses bought, a strongbox emptied before it was ever opened officially. A note along your route lists who gets what, in the same hand as the practised signature. That hand belonged to {culprit}, and the reason was {motive}."
             ]
         ),
         CaseArchetype(
@@ -693,6 +725,10 @@ enum CaseLibrary {
             conclusions: [
                 "THE {roleTitleUpper} WAS PAID BY {culpritUpper} TO LIVE A SECOND LIFE — AND DIED WHEN THEY TRIED TO STOP.",
                 "TWO LIVES, ONE PAYMASTER: {culpritUpper} OWNED THEM BOTH."
+            ],
+            narratives: [
+                "{name} lived two lives on one key ring. Every Tuesday at {time} the {role} crossed {place} and became somebody else — a second name in daily use, a rented room nobody in their real life knew about, and a savings book with deposits far beyond a {role}'s wage. The money came from a competitor: {culprit} was paying for whatever the {role} carried out of their own employer's building, and {motive} kept the arrangement alive. It ended when the {role} tried to stop. A person who owns both of your lives cannot let you hand one of them back.",
+                "Two names, two sets of keys, one paymaster. The room, the letters, the savings book and a timetable circled every Tuesday for a year describe a routine rather than an escape plan — the {role} had been living the second life far longer than anyone suspected. The badge at the end of your route names the firm that was really paying, and that firm answers to {culprit}. The whole arrangement ran on {motive}, and it ended the night the {role} asked to be let out of it."
             ]
         )
     ]
