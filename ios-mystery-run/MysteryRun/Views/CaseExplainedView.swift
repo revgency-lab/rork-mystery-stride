@@ -169,6 +169,9 @@ struct CaseExplainedView: View {
                     .ignoresSafeArea()
             }
         }
+        // Pushed inside a tab the bar is still on screen; presented from the
+        // session summary it is not, and this collapses to nothing.
+        .tabBarClearance()
         .onAppear { appeared = true }
     }
 

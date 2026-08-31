@@ -223,6 +223,18 @@ private struct TabGlyph: View {
 /// Custom bottom bar built from hand-drawn case-file glyphs. Replaces the system
 /// tab bar so the app keeps its noir palette all the way to the screen edge.
 struct DetectiveTabBar: View {
+    /// Space above the glyph row.
+    private static let topPadding: CGFloat = 10
+    /// Fixed height of a tab button. Labels scale down rather than grow, so the
+    /// bar keeps this height at every Dynamic Type size.
+    private static let rowHeight: CGFloat = 48
+    /// Space below the glyph row, before the home indicator.
+    private static let bottomPadding: CGFloat = 4
+
+    /// Total height the bar occupies above the bottom safe area. Screens reserve
+    /// this much room through `tabBarClearance()` so nothing is drawn behind it.
+    static let height: CGFloat = topPadding + rowHeight + bottomPadding
+
     @Binding var selection: AppTab
     /// Live clue progress for the active case, shown as a brass count on Evidence.
     var evidenceBadge: String?
@@ -240,8 +252,8 @@ struct DetectiveTabBar: View {
             }
         }
         .padding(.horizontal, 6)
-        .padding(.top, 10)
-        .padding(.bottom, 4)
+        .padding(.top, Self.topPadding)
+        .padding(.bottom, Self.bottomPadding)
         .background { barBackground }
         .overlay(alignment: .top) { brassHairline }
         .onAppear {
@@ -297,7 +309,7 @@ struct DetectiveTabBar: View {
                     .minimumScaleFactor(0.7)
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 48)
+            .frame(height: Self.rowHeight)
             .contentShape(.rect)
         }
         .buttonStyle(TabPressStyle())

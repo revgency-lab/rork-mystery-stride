@@ -178,6 +178,9 @@ struct SessionSummaryView: View {
                 }
             }
         }
+        // Presented as a cover from a tab, so the tab bar is gone: anything pushed
+        // from here must not keep reserving room for it.
+        .environment(\.tabBarClearance, 0)
         .preferredColorScheme(.dark)
         .sensoryFeedback(.success, trigger: record.id)
     }

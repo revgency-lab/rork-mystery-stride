@@ -23,6 +23,7 @@ struct EvidenceBoardView: View {
                 board(for: mysteryCase)
             } else {
                 EmptyBoardState()
+                    .tabBarClearance()
             }
         }
         .navigationTitle("Evidence Board")
@@ -61,6 +62,7 @@ struct EvidenceBoardView: View {
             .padding(.top, 4)
             .padding(.bottom, 36)
         }
+        .tabBarClearance()
     }
 }
 
@@ -491,7 +493,7 @@ private struct EmptyBoardState: View {
             }
             .padding(.horizontal, 44)
         }
-        .padding(.bottom, 40)
+        .padding(.bottom, 12)
     }
 }
 

@@ -37,6 +37,7 @@ struct ProfileView: View {
                 .padding(.top, 6)
                 .padding(.bottom, 24)
             }
+            .tabBarClearance()
         }
         .navigationTitle("Detective Profile")
         .navigationBarTitleDisplayMode(.inline)

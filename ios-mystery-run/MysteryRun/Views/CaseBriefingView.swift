@@ -27,6 +27,7 @@ struct CaseBriefingView: View {
                 GeneratingCaseView(isGenerating: isGenerating) {
                     Task { await generateCase() }
                 }
+                .tabBarClearance()
             }
         }
         .navigationTitle("Case File")
@@ -232,6 +233,9 @@ struct CaseBriefingView: View {
                     .ignoresSafeArea()
             }
         }
+        // Applied outside the call to action so the button is lifted above the
+        // tab bar rather than sitting behind it.
+        .tabBarClearance()
     }
 
     private func estimatedMinutes(for mysteryCase: MysteryCase) -> Int {

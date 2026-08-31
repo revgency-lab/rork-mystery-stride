@@ -30,6 +30,9 @@ struct ContentView: View {
                 .tag(AppTab.profile)
                 .toolbar(.hidden, for: .tabBar)
         }
+        // The bar is drawn over the tabs, and SwiftUI does not carry this inset
+        // into them, so the height is published for each screen to reserve.
+        .environment(\.tabBarClearance, DetectiveTabBar.height)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             DetectiveTabBar(
                 selection: $selection,

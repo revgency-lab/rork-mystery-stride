@@ -26,6 +26,7 @@ struct ProgressDashboardView: View {
                 .padding(.top, 4)
                 .padding(.bottom, 24)
             }
+            .tabBarClearance()
         }
         .navigationTitle("Service Record")
         .navigationBarTitleDisplayMode(.inline)
