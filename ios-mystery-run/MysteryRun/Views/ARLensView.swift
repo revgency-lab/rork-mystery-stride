@@ -310,11 +310,16 @@ private struct BearingMarker: View {
     let isCollectible: Bool
     let onCollect: () -> Void
 
+    /// Jitter deadband, in degrees: pose and compass noise smaller than this
+    /// never reaches the chevron, so it holds still instead of trembling.
+    private let deadband = 3.5
+
     @State private var pulse: Bool = false
+    @State private var displayedBearing: Double = 0
 
     /// Beyond this the evidence is behind you and the chevron parks on the edge
     /// of the frame rather than pretending to point off into the distance.
-    private var isAhead: Bool { abs(relativeBearing) < 32 }
+    private var isAhead: Bool { abs(displayedBearing) < 32 }
 
     var body: some View {
         VStack(spacing: 18) {
@@ -338,10 +343,10 @@ private struct BearingMarker: View {
                 Image(systemName: "location.north.fill")
                     .font(.system(size: 34, weight: .bold))
                     .foregroundStyle(Theme.brass)
-                    .rotationEffect(.degrees(relativeBearing))
+                    .rotationEffect(.degrees(displayedBearing))
                     .shadow(color: Theme.brass.opacity(0.7), radius: 10)
             }
-            .animation(.easeOut(duration: 0.25), value: relativeBearing)
+            .animation(.easeOut(duration: 0.35), value: displayedBearing)
 
             VStack(spacing: 6) {
                 Text("CLUE \(index) · \(title.uppercased())")
@@ -383,6 +388,10 @@ private struct BearingMarker: View {
         }
         .padding(.horizontal, 24)
         .padding(.bottom, 60)
+        .onChange(of: relativeBearing) { _, newValue in
+            guard abs(newValue - displayedBearing) > deadband else { return }
+            displayedBearing = newValue
+        }
         .onAppear {
             withAnimation(.easeInOut(duration: 1.7).repeatForever(autoreverses: true)) {
                 pulse = true
@@ -398,9 +407,9 @@ private struct BearingMarker: View {
     }
 
     private var turnHint: String {
-        abs(relativeBearing) > 140
+        abs(displayedBearing) > 140
             ? "Turn around"
-            : (relativeBearing > 0 ? "Turn right" : "Turn left")
+            : (displayedBearing > 0 ? "Turn right" : "Turn left")
     }
 }
 
