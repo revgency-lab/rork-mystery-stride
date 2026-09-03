@@ -224,11 +224,11 @@ struct ProfileView: View {
     private var permissionText: String {
         if location.isAuthorized {
             return location.hasRealFix
-                ? "Location on. Outdoor cases will route around where you are."
+                ? "Location on. Cases will route around where you are."
                 : "Location on, waiting for a fix."
         }
         if location.isDenied {
-            return "Location denied. Indoor cases still work, outdoor ones can't unlock clues."
+            return "Location denied. Clues unlock by position, so cases can't progress until it's back on."
         }
         return "Location not requested yet."
     }

@@ -41,9 +41,9 @@ struct ARWorldFrame {
     /// height when ARKit hasn't found a plane yet.
     var floorHeight: Double?
 
-    /// Local positions that outrank the frame's own geodesy whenever present —
-    /// either resolved by the Visual Positioning System, or staged deliberately
-    /// around the detective for an indoor case whose route is somewhere else.
+    /// Local positions that outrank the frame's own geodesy whenever present,
+    /// such as anchors resolved by the Visual Positioning System or fabricated by
+    /// the developer lab.
     var overrides: [UUID: SIMD3<Double>] = [:]
 
     /// True when position is genuinely tracked, so walking changes the distance.

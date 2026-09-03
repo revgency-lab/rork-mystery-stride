@@ -107,12 +107,12 @@ enum SceneLabData {
         (sampleCase.clues.firstIndex(where: \.isPivotal) ?? 1) + 1
     }
 
-    /// An indoor copy, which progresses on simulated distance instead of GPS —
-    /// the only way to watch a live run play out at a desk.
+    /// A throwaway copy of the sample case, so the lab can open the real live HUD
+    /// without touching whatever investigation is genuinely in progress.
     static var simulatedRunCase: MysteryCase {
         var mysteryCase = sampleCase
         mysteryCase.id = UUID()
-        mysteryCase.mode = .indoor
+        mysteryCase.mode = .walk
         return mysteryCase
     }
 
@@ -165,7 +165,7 @@ enum LabScene: String, Identifiable, CaseIterable {
         case .resolutionPartial: "Case explained — partial"
         case .summarySolved: "Session summary — solved"
         case .summaryAbandoned: "Session summary — abandoned"
-        case .simulatedRun: "Simulated live run"
+        case .simulatedRun: "Live run HUD"
         case .arRehearsal: "AR anchor rehearsal"
         }
     }
@@ -179,7 +179,7 @@ enum LabScene: String, Identifiable, CaseIterable {
         case .resolutionPartial: "Only two clues banked, so the report is incomplete."
         case .summarySolved: "Closing stats for a clean solve."
         case .summaryAbandoned: "Walked away early — partial distance and XP."
-        case .simulatedRun: "Runs the real HUD indoors on simulated distance."
+        case .simulatedRun: "Opens the real live HUD against the current fix."
         case .arRehearsal: "Drop a clue in your room and check it stays put."
         }
     }

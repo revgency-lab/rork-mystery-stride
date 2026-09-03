@@ -273,7 +273,6 @@ struct LiveInvestigationView: View {
     /// chrome — the detective is only told about their signal when it's actually
     /// hurting them, in the card they're already reading.
     private var hasWeakSignal: Bool {
-        guard !engine.isIndoor else { return false }
         switch location.signalQuality {
         case .poor, .none: return true
         case .good, .fair: return false

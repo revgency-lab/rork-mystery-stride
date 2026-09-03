@@ -4,7 +4,7 @@
 //
 //  Drives a live investigation: elapsed time, distance covered, and GPS-proximity
 //  clue unlocking. Pace is never part of the logic — walkers and runners progress
-//  identically. Indoor sessions swap GPS for simulated progress along the route.
+//  identically. Progress always comes from real position; nothing is simulated.
 //
 
 import CoreLocation
@@ -46,7 +46,6 @@ final class InvestigationEngine {
     /// always the receiver re-acquiring rather than the detective teleporting, so
     /// evidence stays locked until a second fix agrees with the new position.
     private var awaitingReanchorConfirmation: Bool = false
-    private var virtualOffset: Double = 0
     private var announcedClueIDs: Set<UUID> = []
     /// Wall-clock anchors so time stays honest while the app is suspended.
     private var runningSince: Date?
@@ -77,11 +76,9 @@ final class InvestigationEngine {
         return min(1, max(0.02, 1 - (distanceToNextClue / window)))
     }
 
-    var isIndoor: Bool { mysteryCase?.mode == .indoor }
-
     /// Radius in metres at which the next clue unlocks — shown as a map ring.
     var discoveryRadius: Double {
-        isIndoor ? 8 : store.profile.discoveryRadius
+        store.profile.discoveryRadius
     }
 
     // MARK: - Lifecycle
@@ -91,7 +88,6 @@ final class InvestigationEngine {
         phase = .active
         elapsed = 0
         distance = 0
-        virtualOffset = 0
         traveled = []
         announcedClueIDs = []
         lastFix = nil
@@ -106,9 +102,7 @@ final class InvestigationEngine {
         store.markCaseStarted()
         store.clearSession()
         Task { await NotificationService.requestPermission() }
-        if mysteryCase.mode.usesLiveLocation {
-            location.startTracking()
-        }
+        location.startTracking()
         startTicker()
         updateDistanceToNextClue()
     }
@@ -123,9 +117,9 @@ final class InvestigationEngine {
         runningSince = nil
         distance = snapshot.distance
         traveled = snapshot.traveled
-        virtualOffset = snapshot.virtualOffset
         announcedClueIDs = Set(mysteryCase.foundClues.map(\.id))
         lastFix = nil
+        awaitingReanchorConfirmation = false
         pendingClue = nil
         lastRecord = nil
         didUseOverride = false
@@ -149,9 +143,8 @@ final class InvestigationEngine {
         phase = .active
         runningSince = Date()
         lastFix = nil
-        if mysteryCase?.mode.usesLiveLocation == true {
-            location.startTracking()
-        }
+        awaitingReanchorConfirmation = false
+        location.startTracking()
     }
 
     func togglePause() {
@@ -216,19 +209,12 @@ final class InvestigationEngine {
         if let runningSince {
             elapsed = accumulatedElapsed + Date().timeIntervalSince(runningSince)
         }
-
-        if isIndoor {
-            advanceVirtualPosition()
-            updateDistanceToNextClue()
-            checkForDiscovery()
-        }
-
         persistSnapshot()
     }
 
     /// Entry point for every GPS fix — runs in the foreground and background alike.
     private func ingest(_ fix: CLLocation) {
-        guard phase == .active, !isIndoor else { return }
+        guard phase == .active else { return }
         if let runningSince {
             elapsed = accumulatedElapsed + Date().timeIntervalSince(runningSince)
         }
@@ -236,18 +222,6 @@ final class InvestigationEngine {
         updateDistanceToNextClue()
         checkForDiscovery()
         persistSnapshot()
-    }
-
-    /// Indoor / treadmill fallback: distance accrues at the session's assumed pace.
-    private func advanceVirtualPosition() {
-        guard let mysteryCase else { return }
-        let speed = mysteryCase.mode.assumedSpeed
-        virtualOffset = min(virtualOffset + speed, mysteryCase.plannedDistance)
-        distance = virtualOffset
-        if let point = CaseGenerator.pointAlong(route: mysteryCase.route, distance: virtualOffset) {
-            currentPoint = point
-            appendTraveled(point)
-        }
     }
 
     private func consume(_ fix: CLLocation) {
@@ -322,7 +296,6 @@ final class InvestigationEngine {
     /// saying you are somewhere in a city block — unlocking on that is how
     /// evidence gets collected from a sofa.
     private func isFixTrustworthy(for radius: Double) -> Bool {
-        if isIndoor { return true }
         if awaitingReanchorConfirmation { return false }
         guard let accuracy = location.accuracy, accuracy >= 0 else { return false }
         return accuracy <= max(radius, 20)
@@ -331,7 +304,7 @@ final class InvestigationEngine {
     /// True when the detective is standing inside the discovery radius but the
     /// fix is too vague to prove it, so the UI can say why nothing unlocked.
     var isHoldingForBetterFix: Bool {
-        guard phase == .active, !isIndoor, nextClue != nil else { return false }
+        guard phase == .active, nextClue != nil else { return false }
         guard let distanceToNextClue else { return false }
         let radius = store.profile.discoveryRadius
         guard distanceToNextClue <= radius else { return false }
@@ -343,9 +316,7 @@ final class InvestigationEngine {
             distanceToNextClue = nil
             return
         }
-        if isIndoor {
-            distanceToNextClue = max(0, next.routeOffset - virtualOffset)
-        } else if let currentPoint {
+        if let currentPoint {
             distanceToNextClue = currentPoint.distance(to: next.point)
         } else {
             distanceToNextClue = nil
@@ -353,7 +324,7 @@ final class InvestigationEngine {
     }
 
     private func checkForDiscovery() {
-        guard var mysteryCase, let next = mysteryCase.nextClue else { return }
+        guard let mysteryCase, let next = mysteryCase.nextClue else { return }
         guard let distanceToNextClue else { return }
 
         if distanceToNextClue <= 120, !announcedClueIDs.contains(next.id) {
@@ -362,13 +333,13 @@ final class InvestigationEngine {
             NotificationService.closingIn(on: next, metres: distanceToNextClue)
         }
 
-        let radius = isIndoor ? 8 : store.profile.discoveryRadius
+        let radius = store.profile.discoveryRadius
         guard distanceToNextClue <= radius else { return }
         // Reaching the evidence has to be something we actually observed, not
         // something a drifting or freshly re-acquired fix implied.
         guard isFixTrustworthy(for: radius) else { return }
 
-        award(next, pinnedToCurrentPosition: !isIndoor)
+        award(next, pinnedToCurrentPosition: true)
     }
 
     /// Banks the next clue without waiting for GPS proximity.
@@ -381,7 +352,7 @@ final class InvestigationEngine {
     func markNextClueFound(asOverride: Bool = true) {
         guard phase == .active || phase == .paused, let next = nextClue else { return }
         if asOverride { didUseOverride = true }
-        award(next, pinnedToCurrentPosition: !asOverride && !isIndoor)
+        award(next, pinnedToCurrentPosition: !asOverride)
     }
 
     private func award(_ clue: Clue, pinnedToCurrentPosition: Bool) {
@@ -389,7 +360,7 @@ final class InvestigationEngine {
               let index = mysteryCase.clues.firstIndex(where: { $0.id == clue.id }) else { return }
 
         mysteryCase.clues[index].foundAt = Date()
-        // Outdoors the clue is pinned wherever the detective actually stood.
+        // The clue is pinned wherever the detective actually stood.
         if pinnedToCurrentPosition, let currentPoint {
             mysteryCase.clues[index].point = currentPoint
         }
@@ -432,7 +403,6 @@ final class InvestigationEngine {
                 elapsed: elapsed,
                 distance: distance,
                 traveled: traveled,
-                virtualOffset: virtualOffset,
                 savedAt: Date(),
                 wasRunning: phase == .active
             )

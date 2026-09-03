@@ -34,12 +34,11 @@ nonisolated struct GeoPoint: Codable, Hashable, Sendable {
     }
 }
 
-/// How the detective is covering the route. Purely a tracking tag outdoors;
-/// `indoor` swaps GPS proximity for simulated distance progression.
+/// How the detective is covering the route. Purely a tracking tag — gameplay is
+/// identical either way, and every case unlocks its clues from live position.
 nonisolated enum SessionMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case run
     case walk
-    case indoor
 
     var id: String { rawValue }
 
@@ -47,7 +46,6 @@ nonisolated enum SessionMode: String, Codable, CaseIterable, Identifiable, Senda
         switch self {
         case .run: "Run"
         case .walk: "Walk"
-        case .indoor: "Indoor"
         }
     }
 
@@ -55,20 +53,24 @@ nonisolated enum SessionMode: String, Codable, CaseIterable, Identifiable, Senda
         switch self {
         case .run: "figure.run"
         case .walk: "figure.walk"
-        case .indoor: "shoe.fill"
         }
     }
 
-    /// Metres per second used for time estimates and indoor simulation.
+    /// Metres per second used for time estimates.
     var assumedSpeed: Double {
         switch self {
         case .run: 2.6
         case .walk: 1.4
-        case .indoor: 1.7
         }
     }
 
-    var usesLiveLocation: Bool { self != .indoor }
+    /// Cases saved before indoor mode was withdrawn still carry it on disk.
+    /// Decoding them as a walk keeps those files readable instead of throwing
+    /// away the detective's history.
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = SessionMode(rawValue: raw) ?? .walk
+    }
 }
 
 /// A physical piece of evidence, its story fragment and how it cracks the case.
@@ -138,7 +140,6 @@ nonisolated struct SessionSnapshot: Codable, Sendable {
     var elapsed: TimeInterval
     var distance: Double
     var traveled: [GeoPoint]
-    var virtualOffset: Double
     var savedAt: Date
     var wasRunning: Bool
 

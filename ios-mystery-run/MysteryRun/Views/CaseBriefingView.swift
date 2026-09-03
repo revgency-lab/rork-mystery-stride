@@ -197,7 +197,7 @@ struct CaseBriefingView: View {
                     }
                 }
 
-                if selectedMode.usesLiveLocation, location.isDenied {
+                if location.isDenied {
                     LocationDeniedNotice()
                 }
 
@@ -470,9 +470,7 @@ private struct ModePicker: View {
             .padding(5)
             .inkCard(cornerRadius: 15)
 
-            Text(selection == .indoor
-                 ? "Indoor mode unlocks clues on distance covered instead of GPS — treadmill friendly."
-                 : "Tagged as a \(selection.title.lowercased()) for your stats only. Gameplay is identical.")
+            Text("Tagged as a \(selection.title.lowercased()) for your stats only. Gameplay is identical.")
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
                 .padding(.horizontal, 4)
@@ -522,7 +520,7 @@ private struct LocationDeniedNotice: View {
             Label("Location access is off", systemImage: "location.slash.fill")
                 .font(.system(.subheadline, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
-            Text("Outdoor cases need your position to unlock clues. Turn it on in Settings, or switch to Indoor mode.")
+            Text("Clues unlock when you reach them, so the case needs your position to make any progress. Turn it on in Settings.")
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
             Button("Open Settings") {
