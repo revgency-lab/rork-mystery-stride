@@ -371,6 +371,11 @@ struct LiveInvestigationView: View {
         if engine.phase == .paused {
             return "Paused — resume when you're moving again"
         }
+        // Takes priority over the generic warning: they are already standing
+        // there, and the only thing between them and the evidence is the fix.
+        if engine.isHoldingForBetterFix {
+            return "Close enough — holding until the GPS settles. Collect it by hand if it won't."
+        }
         if hasWeakSignal {
             return "Weak GPS — distances may drift until the fix settles"
         }

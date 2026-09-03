@@ -42,6 +42,10 @@ final class InvestigationEngine {
 
     private var ticker: Task<Void, Never>?
     private var lastFix: CLLocation?
+    /// Set when a fix lands impossibly far from the last one. The leap is almost
+    /// always the receiver re-acquiring rather than the detective teleporting, so
+    /// evidence stays locked until a second fix agrees with the new position.
+    private var awaitingReanchorConfirmation: Bool = false
     private var virtualOffset: Double = 0
     private var announcedClueIDs: Set<UUID> = []
     /// Wall-clock anchors so time stays honest while the app is suspended.
@@ -91,6 +95,7 @@ final class InvestigationEngine {
         traveled = []
         announcedClueIDs = []
         lastFix = nil
+        awaitingReanchorConfirmation = false
         pendingClue = nil
         lastRecord = nil
         didUseOverride = false
@@ -252,30 +257,85 @@ final class InvestigationEngine {
         guard abs(fix.timestamp.timeIntervalSinceNow) < 30 else { return }
 
         let point = GeoPoint(fix.coordinate)
-        if let lastFix {
-            let delta = fix.distance(from: lastFix)
-            if delta > 2, delta < 200 {
-                distance += delta
-                appendTraveled(point)
-                self.lastFix = fix
-            } else if delta >= 200 {
-                // A GPS jump (tunnel, canyon, cold start). Don't credit the leap,
-                // but re-anchor — otherwise every later fix looks like a jump too
-                // and distance freezes for the rest of the run.
-                self.lastFix = fix
-                appendTraveled(point)
-            }
-        } else {
-            lastFix = fix
+        guard let lastFix else {
+            self.lastFix = fix
+            currentPoint = point
             appendTraveled(point)
+            return
         }
+
+        let delta = fix.distance(from: lastFix)
+        let noiseFloor = Self.noiseFloor(fix, lastFix)
+
+        // A GPS jump (tunnel, canyon, cold start). Don't credit the leap, but
+        // re-anchor — otherwise every later fix looks like a jump too and
+        // distance freezes for the rest of the run.
+        if delta >= 200 {
+            self.lastFix = fix
+            awaitingReanchorConfirmation = true
+            currentPoint = point
+            appendTraveled(point)
+            return
+        }
+
+        // Two fixes taken while standing still differ by roughly their error
+        // radius, and that difference is a fresh random direction every second.
+        // Credited as travel it accumulates without bound: the dot wanders, the
+        // trail scribbles, and the distance climbs while the phone sits on a
+        // table. Below the noise floor nothing moved.
+        guard delta > noiseFloor else {
+            awaitingReanchorConfirmation = false
+            // Keep whichever fix the receiver is more confident about, so the
+            // anchor sharpens while standing still instead of drifting.
+            if fix.horizontalAccuracy < lastFix.horizontalAccuracy {
+                self.lastFix = fix
+            }
+            return
+        }
+
+        awaitingReanchorConfirmation = false
+        distance += delta
+        self.lastFix = fix
         currentPoint = point
+        appendTraveled(point)
+    }
+
+    /// Movement smaller than this is indistinguishable from receiver noise.
+    ///
+    /// Scaled by the worse of the two fixes: a clean 5 m fix registers a genuine
+    /// few steps, while a 40 m urban-canyon fix has to show real travel before it
+    /// counts. Capped so a terrible fix can't freeze tracking outright.
+    private static func noiseFloor(_ a: CLLocation, _ b: CLLocation) -> Double {
+        let worst = max(a.horizontalAccuracy, b.horizontalAccuracy)
+        return min(max(worst * 0.75, 3), 30)
     }
 
     private func appendTraveled(_ point: GeoPoint) {
         if let last = traveled.last, last.distance(to: point) < 3 { return }
         traveled.append(point)
         if traveled.count > 3_000 { traveled.removeFirst(traveled.count - 3_000) }
+    }
+
+    /// Whether the current fix is good enough to unlock evidence.
+    ///
+    /// A fix accurate to 50 m that claims you are 20 m from the clue is really
+    /// saying you are somewhere in a city block — unlocking on that is how
+    /// evidence gets collected from a sofa.
+    private func isFixTrustworthy(for radius: Double) -> Bool {
+        if isIndoor { return true }
+        if awaitingReanchorConfirmation { return false }
+        guard let accuracy = location.accuracy, accuracy >= 0 else { return false }
+        return accuracy <= max(radius, 20)
+    }
+
+    /// True when the detective is standing inside the discovery radius but the
+    /// fix is too vague to prove it, so the UI can say why nothing unlocked.
+    var isHoldingForBetterFix: Bool {
+        guard phase == .active, !isIndoor, nextClue != nil else { return false }
+        guard let distanceToNextClue else { return false }
+        let radius = store.profile.discoveryRadius
+        guard distanceToNextClue <= radius else { return false }
+        return !isFixTrustworthy(for: radius)
     }
 
     private func updateDistanceToNextClue() {
@@ -304,6 +364,9 @@ final class InvestigationEngine {
 
         let radius = isIndoor ? 8 : store.profile.discoveryRadius
         guard distanceToNextClue <= radius else { return }
+        // Reaching the evidence has to be something we actually observed, not
+        // something a drifting or freshly re-acquired fix implied.
+        guard isFixTrustworthy(for: radius) else { return }
 
         award(next, pinnedToCurrentPosition: !isIndoor)
     }
